@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Studio Mocap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+  :root{
+    color-scheme: dark;
+    --ground:#10141b; --panel:#171d27; --panel-2:#1d2431; --line:#283142; --line-2:#344056;
+    --text:#e7eaf0; --muted:#8b95a8; --faint:#5d6779;
+    --accent:#86a8ff; --accent-ink:#0e1422;
+    --trim:#ffb547; --rec:#ff4f5e; --ok:#4fd1a1;
+    --ui:"Manrope", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono:"JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --display:"Unbounded", "Manrope", system-ui, sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--ground);color:var(--text);font:14px/1.45 var(--ui);-webkit-font-smoothing:antialiased}
+  [hidden]{display:none!important}
+  button,select,input{font:inherit;color:inherit}
+  button{cursor:pointer}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+  .app{display:grid;grid-template-rows:auto 1fr auto;height:100%;min-height:0}
+  header{display:flex;align-items:center;gap:16px;padding:12px 16px;border-bottom:1px solid var(--line);padding-top:calc(12px + env(safe-area-inset-top,0px))}
+  .brand{font-family:var(--display);font-weight:700;font-size:17px;letter-spacing:.01em;display:flex;align-items:center;gap:10px;white-space:nowrap}
+  .brand i{width:10px;height:10px;border-radius:50%;background:var(--faint);display:inline-block;box-shadow:0 0 0 3px rgba(255,255,255,.04)}
+  .brand i.live{background:var(--ok)} .brand i.rec{background:var(--rec);animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.35}}
+  .status{color:var(--muted);font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  .main{display:grid;grid-template-columns:1fr 300px;min-height:0}
+  .stage{position:relative;min-height:0;overflow:hidden;background:radial-gradient(ellipse at 50% 30%,#1a2130 0%,var(--ground) 70%)}
+  #three{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+  .pip{position:absolute;left:14px;bottom:14px;width:min(30%,260px);aspect-ratio:4/3;max-width:100%;border-radius:10px;overflow:hidden;background:#0a0d12;border:1px solid var(--line-2)}
+  .pip video,.pip canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .pip.mirror video,.pip.mirror canvas{transform:scaleX(-1)}
+  .pip .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-size:12px;text-align:center;padding:10px}
+  .badge{position:absolute;top:14px;left:14px;font:600 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:5px 9px;border-radius:6px;background:rgba(16,20,27,.75);border:1px solid var(--line-2);color:var(--muted)}
+  .badge.rec{color:var(--rec);border-color:var(--rec)}
+  .badge.review{color:var(--trim);border-color:var(--trim)}
+  .rectime{position:absolute;top:14px;right:14px;font:600 13px var(--mono);color:var(--rec);background:rgba(16,20,27,.75);padding:5px 9px;border-radius:6px;font-variant-numeric:tabular-nums}
+
+  aside{border-left:1px solid var(--line);background:var(--panel);overflow-y:auto;min-height:0}
+  .sec{padding:16px;border-bottom:1px solid var(--line);display:grid;gap:12px}
+  .sec h2{margin:0;font:600 11px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .btn{border:1px solid var(--line-2);background:var(--panel-2);border-radius:8px;padding:8px 12px;font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:8px;transition:border-color .15s, background .15s}
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .btn:disabled{opacity:.4;cursor:not-allowed;border-color:var(--line-2)}
+  .btn.grow{flex:1;justify-content:center}
+  .file{position:relative;overflow:hidden}
+  .file input{position:absolute;inset:0;opacity:0;cursor:pointer}
+  .hint{color:var(--muted);font-size:12px;margin:0}
+  .modelname{font-weight:600;overflow-wrap:anywhere}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{font:500 11px var(--mono);padding:3px 7px;border-radius:5px;border:1px solid var(--line-2);color:var(--faint)}
+  .chip.on{color:var(--ok);border-color:rgba(79,209,161,.45);background:rgba(79,209,161,.07)}
+  label.opt{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px}
+  label.opt input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent)}
+  label.opt input[type=range]{width:120px;accent-color:var(--accent)}
+  select{background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:5px 8px}
+  .drop{border:1px dashed var(--line-2);border-radius:10px;padding:12px;display:grid;gap:8px}
+  .drop.over{border-color:var(--accent);background:rgba(134,168,255,.06)}
+
+  /* transport */
+  .transport{border-top:1px solid var(--line);background:var(--panel);padding:12px 16px;padding-bottom:calc(12px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:auto 1fr auto;gap:16px;align-items:center}
+  .recbtn{width:56px;height:56px;border-radius:50%;border:2px solid var(--line-2);background:var(--panel-2);display:grid;place-items:center;padding:0}
+  .recbtn span{width:22px;height:22px;border-radius:50%;background:var(--rec);transition:border-radius .2s,width .2s,height .2s}
+  .recbtn.on{border-color:var(--rec)}
+  .recbtn.on span{border-radius:4px;width:18px;height:18px}
+  .recbtn:disabled{opacity:.4;cursor:not-allowed}
+  .tl{display:grid;gap:6px;min-width:0}
+  .tlhead{display:flex;justify-content:space-between;gap:10px;font:12px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums;flex-wrap:wrap}
+  .tlhead b{color:var(--trim);font-weight:600}
+  .tlhead .ph{color:var(--text)}
+  #timeline{width:100%;height:56px;display:block;border-radius:8px;background:var(--ground);border:1px solid var(--line);touch-action:none;cursor:pointer}
+  .tlempty{height:56px;border-radius:8px;border:1px dashed var(--line-2);display:grid;place-items:center;color:var(--faint);font-size:12px;text-align:center;padding:0 10px}
+  .tbtns{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+  .icon{width:14px;height:14px;display:block}
+
+  @media (max-width:860px){
+    .main{grid-template-columns:1fr;grid-template-rows:minmax(300px,55vh) auto;overflow-y:auto}
+    .app{grid-template-rows:auto 1fr auto}
+    aside{border-left:0;border-top:1px solid var(--line);overflow:visible}
+    .transport{grid-template-columns:auto 1fr;}
+    .tbtns{grid-column:1 / -1;justify-content:stretch}
+    .tbtns .btn{flex:1;justify-content:center}
+    .pip{width:38%}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
+  }
+}
+</script>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand"><i id="dot"></i>Studio Mocap</div>
+    <div class="status" id="status">Chargement du modèle de démo…</div>
+  </header>
+
+  <div class="main">
+    <div class="stage" id="stage">
+      <canvas id="three"></canvas>
+      <div class="badge" id="badge">Repos</div>
+      <div class="rectime" id="rectime" hidden>● 00:00.00</div>
+      <div class="pip mirror" id="pip">
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="empty" id="pipEmpty">Caméra éteinte</div>
+      </div>
+    </div>
+
+    <aside>
+      <section class="sec">
+        <h2>Source</h2>
+        <div class="row">
+          <button class="btn primary grow" id="camBtn">
+            <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h6A1.5 1.5 0 0 1 11 4.5v1.2l2.7-1.6a.5.5 0 0 1 .8.4v7a.5.5 0 0 1-.8.4L11 10.3v1.2A1.5 1.5 0 0 1 9.5 13h-6A1.5 1.5 0 0 1 2 11.5z"/></svg>
+            <span>Démarrer la caméra</span>
+          </button>
+        </div>
+        <div class="row">
+          <label class="btn file grow">Utiliser une vidéo à la place
+            <input type="file" id="videoFile" accept="video/*">
+          </label>
+        </div>
+        <p class="hint">Recule pour que ton corps entier soit visible. Le suivi fonctionne aussi avec le haut du corps seulement.</p>
+      </section>
+
+      <section class="sec">
+        <h2>Modèle 3D</h2>
+        <div class="drop" id="drop">
+          <div class="modelname" id="modelName">Robot de démo (Mixamo)</div>
+          <label class="btn file">
+            <svg class="icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 12.5 6h-3v5h-3V6h-3zM2.5 12.5h11V14h-11z"/></svg>
+            Importer un modèle riggé
+            <input type="file" id="modelFile" accept=".glb,.gltf,.fbx,.vrm">
+          </label>
+          <p class="hint">.glb, .gltf (fichier unique), .fbx ou .vrm. Tu peux aussi le glisser ici.</p>
+        </div>
+        <div class="chips" id="chips"></div>
+      </section>
+
+      <section class="sec">
+        <h2>Réglages</h2>
+        <label class="opt">Effet miroir <input type="checkbox" id="mirror" checked></label>
+        <label class="opt">Suivre les jambes <input type="checkbox" id="legs" checked></label>
+        <label class="opt">Lissage <input type="range" id="smooth" min="0" max="0.9" step="0.05" value="0.55"></label>
+        <label class="opt">Précision du suivi
+          <select id="complexity">
+            <option value="lite">Rapide</option>
+            <option value="full" selected>Standard</option>
+            <option value="heavy">Précis</option>
+          </select>
+        </label>
+        <label class="opt">Afficher le squelette <input type="checkbox" id="showSkel"></label>
+      </section>
+    </aside>
+  </div>
+
+  <div class="transport">
+    <button class="recbtn" id="recBtn" title="Enregistrer" aria-label="Enregistrer" disabled><span></span></button>
+    <div class="tl">
+      <div class="tlhead" id="tlhead" hidden>
+        <span>Début <b id="tIn">00:00.00</b></span>
+        <span class="ph" id="tPh">00:00.00</span>
+        <span>Fin <b id="tOut">00:00.00</b></span>
+        <span id="tDur">Durée 0,00 s · 0 images</span>
+      </div>
+      <canvas id="timeline" hidden></canvas>
+      <div class="tlempty" id="tlEmpty">Démarre la caméra puis appuie sur le bouton rouge pour enregistrer une prise.</div>
+    </div>
+    <div class="tbtns">
+      <button class="btn" id="playBtn" disabled>
+        <svg class="icon" id="playIcon" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg>
+        <span id="playLabel">Lire</span>
+      </button>
+      <button class="btn" id="cutBtn" disabled>Couper</button>
+      <button class="btn" id="liveBtn" disabled>Direct</button>
+      <button class="btn primary" id="exportBtn" disabled>Exporter .glb</button>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+
+const $ = id => document.getElementById(id);
+const statusEl = $('status');
+const setStatus = t => statusEl.textContent = t;
+
+/* ---------------- Scene ---------------- */
+const canvas = $('three');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(35, 1, 0.05, 100);
+camera.position.set(0, 1.25, 4.4);
+const controls = new OrbitControls(camera, canvas);
+controls.target.set(0, 0.95, 0);
+controls.enableDamping = true;
+controls.update();
+
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x1a1f2a, 1.4));
+const key = new THREE.DirectionalLight(0xffffff, 2.2);
+key.position.set(2.5, 4, 3);
+key.castShadow = true;
+key.shadow.mapSize.set(1024, 1024);
+Object.assign(key.shadow.camera, { left: -2, right: 2, top: 2.5, bottom: -0.5 });
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x86a8ff, 1.2);
+rim.position.set(-3, 2, -3);
+scene.add(rim);
+
+const floor = new THREE.Mesh(new THREE.CircleGeometry(2.4, 64), new THREE.ShadowMaterial({ opacity: 0.35 }));
+floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+const grid = new THREE.GridHelper(4.8, 24, 0x344056, 0x222a38);
+grid.material.transparent = true; grid.material.opacity = 0.6; scene.add(grid);
+
+function resize() {
+  const r = $('stage').getBoundingClientRect();
+  renderer.setSize(r.width, r.height, false);
+  camera.aspect = r.width / Math.max(1, r.height);
+  camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe($('stage'));
+
+/* ---------------- Rig mapping ---------------- */
+const ROLE_RX = [
+  ['hips', /^(hips?|pelvis)$/],
+  ['neck', /^neck\d*$/],
+  ['head', /^head$/],
+  ['clav', /^(shoulder|clavicle|collar)$/],
+  ['upperArm', /^(arm|upperarm|uparm)$/],
+  ['lowerArm', /^(forearm|lowerarm|elbow)$/],
+  ['hand', /^(hand|wrist)$/],
+  ['upperLeg', /^(upleg|upperleg|thigh)$/],
+  ['lowerLeg', /^(leg|lowerleg|shin|calf|knee)$/],
+  ['foot', /^(foot|ankle)$/],
+  ['toe', /^(toebase|toes?|ball)$/],
+];
+const SPINE_RX = /^(spine\d*|chest|upperchest|torso)$/;
+const SIDED = new Set(['clav','upperArm','lowerArm','hand','upperLeg','lowerLeg','foot','toe']);
+
+function classify(raw) {
+  const n = raw.toLowerCase();
+  let side = null;
+  if (/left/.test(n)) side = 'L';
+  else if (/right/.test(n)) side = 'R';
+  else if (/(^|[_.\s:-])l($|[_.\s:-])/.test(n)) side = 'L';
+  else if (/(^|[_.\s:-])r($|[_.\s:-])/.test(n)) side = 'R';
+  let b = n.replace(/mixamorig\d*/g, '')
+    .replace(/^(cc_?base_?|j_?bip_?|bip0?\d*[_\s]?|def[_-]|org[_-])/, '')
+    .replace(/left|right/g, '')
+    .replace(/(^|[_.\s:-])[lrc](?=$|[_.\s:-])/g, '$1')
+    .replace(/[^a-z0-9]/g, '');
+  return { base: b, side };
+}
+
+let rig = null; // { obj, map, order, spine, rest... }
+
+function buildRig(obj) {
+  const bones = [];
+  obj.traverse(o => { if (o.isBone) bones.push(o); });
+  if (!bones.length) throw new Error("Ce modèle n'a pas de squelette (aucun os trouvé).");
+
+  const map = {}; const spine = [];
+  for (const b of bones) {
+    const orig = b.userData.__orig || b.name;
+    const { base, side } = classify(orig);
+    if (SPINE_RX.test(base)) { spine.push(b); continue; }
+    for (const [role, rx] of ROLE_RX) {
+      if (!rx.test(base)) continue;
+      if (SIDED.has(role) && !side) break;
+      const k = SIDED.has(role) ? role + side : role;
+      if (!map[k]) map[k] = b;
+      break;
+    }
+  }
+  if (map.hips) {
+    const inHips = b => { let p = b.parent; while (p) { if (p === map.hips) return true; p = p.parent; } return false; };
+    for (let i = spine.length - 1; i >= 0; i--) if (!inHips(spine[i])) spine.splice(i, 1);
+  }
+  // keep a single chain: stop when a spine bone isn't a descendant of the previous
+  const chain = [];
+  for (const s of spine) {
+    if (!chain.length) { chain.push(s); continue; }
+    let p = s.parent, ok = false;
+    while (p) { if (p === chain[chain.length - 1]) { ok = true; break; } p = p.parent; }
+    if (ok) chain.push(s);
+  }
+  if (!map.hips && chain.length) map.hips = chain.shift();
+
+  obj.updateMatrixWorld(true);
+  const rest = new Map();
+  const drive = [];
+  const addDrive = b => { if (b && !rest.has(b)) {
+    rest.set(b, { local: b.quaternion.clone(), world: b.getWorldQuaternion(new THREE.Quaternion()), pos: b.getWorldPosition(new THREE.Vector3()) });
+    drive.push(b);
+  }};
+  addDrive(map.hips); chain.forEach(addDrive); addDrive(map.neck); addDrive(map.head);
+  for (const s of ['L','R']) ['upperArm','lowerArm','hand','upperLeg','lowerLeg','foot'].forEach(r => addDrive(map[r+s]));
+  for (const s of ['L','R']) if (map['toe'+s]) rest.set(map['toe'+s], { pos: map['toe'+s].getWorldPosition(new THREE.Vector3()) });
+
+  const P = k => map[k] && rest.get(map[k])?.pos;
+  const childAvg = b => {
+    const kids = b.children.filter(c => c.isBone);
+    if (!kids.length) return null;
+    const v = new THREE.Vector3(); const t = new THREE.Vector3();
+    kids.forEach(c => v.add(c.getWorldPosition(t)));
+    return v.divideScalar(kids.length);
+  };
+  const restDir = {};
+  const dirOf = (from, to) => (from && to) ? to.clone().sub(from).normalize() : null;
+  for (const s of ['L','R']) {
+    restDir['upperArm'+s] = dirOf(P('upperArm'+s), P('lowerArm'+s));
+    restDir['lowerArm'+s] = dirOf(P('lowerArm'+s), P('hand'+s));
+    restDir['hand'+s] = map['hand'+s] ? dirOf(P('hand'+s), childAvg(map['hand'+s])) : null;
+    restDir['upperLeg'+s] = dirOf(P('upperLeg'+s), P('lowerLeg'+s));
+    restDir['lowerLeg'+s] = dirOf(P('lowerLeg'+s), P('foot'+s));
+    restDir['foot'+s] = map['foot'+s] ? dirOf(P('foot'+s), P('toe'+s) || childAvg(map['foot'+s])) : null;
+  }
+
+  // rest body basis
+  const hipsPos = P('hips') || new THREE.Vector3();
+  let X = (P('upperLegL') && P('upperLegR')) ? P('upperLegL').clone().sub(P('upperLegR'))
+        : (P('upperArmL') && P('upperArmR')) ? P('upperArmL').clone().sub(P('upperArmR')) : new THREE.Vector3(1,0,0);
+  let Xs = (P('upperArmL') && P('upperArmR')) ? P('upperArmL').clone().sub(P('upperArmR')) : X.clone();
+  const shMid = (P('upperArmL') && P('upperArmR')) ? P('upperArmL').clone().add(P('upperArmR')).multiplyScalar(0.5) : null;
+  const Y = shMid ? shMid.clone().sub(hipsPos) : new THREE.Vector3(0,1,0);
+  const restHipsQ = basisQuat(X, Y);
+  const restChestQ = basisQuat(Xs, Y);
+
+  return { obj, map, chain, rest, drive, restDir, restHipsQ, restChestQ };
+}
+
+const _m = new THREE.Matrix4();
+function basisQuat(X, Y, Zhint) {
+  const x = X.clone().normalize();
+  let y, z;
+  if (Zhint) {
+    z = Zhint.clone().sub(x.clone().multiplyScalar(Zhint.dot(x))).normalize();
+    y = new THREE.Vector3().crossVectors(z, x).normalize();
+  } else {
+    y = Y.clone().sub(x.clone().multiplyScalar(Y.dot(x))).normalize();
+    z = new THREE.Vector3().crossVectors(x, y).normalize();
+  }
+  _m.makeBasis(x, y, z);
+  return new THREE.Quaternion().setFromRotationMatrix(_m);
+}
+
+function renderChips() {
+  const wanted = [['hips','Bassin'],['spine','Colonne'],['neck','Cou'],['head','Tête'],
+    ['upperArmL','Bras G'],['lowerArmL','Avant-bras G'],['handL','Main G'],
+    ['upperArmR','Bras D'],['lowerArmR','Avant-bras D'],['handR','Main D'],
+    ['upperLegL','Cuisse G'],['lowerLegL','Tibia G'],['footL','Pied G'],
+    ['upperLegR','Cuisse D'],['lowerLegR','Tibia D'],['footR','Pied D']];
+  $('chips').innerHTML = wanted.map(([k,l]) => {
+    const on = k === 'spine' ? rig && rig.chain.length : rig && rig.map[k];
+    return `<span class="chip ${on ? 'on' : ''}">${l}</span>`;
+  }).join('');
+}
+
+/* ---------------- Model loading ---------------- */
+let skelHelper = null;
+function setModel(obj, label) {
+  if (rig) { scene.remove(rig.obj); }
+  if (skelHelper) { scene.remove(skelHelper); skelHelper = null; }
+  // unique, binding-safe bone names (keep original for matching)
+  const used = new Set();
+  obj.traverse(o => {
+    if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; }
+    if (o.isBone) {
+      o.userData.__orig = o.userData.__orig || o.name;
+      let n = THREE.PropertyBinding.sanitizeNodeName(o.name || 'bone') || 'bone', k = n, i = 1;
+      while (used.has(k)) k = n + '_' + (i++);
+      used.add(k); o.name = k;
+    }
+  });
+  scene.add(obj);
+  obj.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  if (size.y > 0) obj.scale.multiplyScalar(1.7 / size.y);
+  obj.updateMatrixWorld(true);
+  box.setFromObject(obj);
+  obj.position.x -= (box.min.x + box.max.x) / 2;
+  obj.position.z -= (box.min.z + box.max.z) / 2;
+  obj.position.y -= box.min.y;
+  obj.updateMatrixWorld(true);
+
+  rig = buildRig(obj);
+  skelHelper = new THREE.SkeletonHelper(obj);
+  skelHelper.visible = $('showSkel').checked;
+  scene.add(skelHelper);
+  $('modelName').textContent = label;
+  renderChips();
+  clearTake();
+  const missing = ['hips','upperArmL','upperArmR'].filter(k => !rig.map[k]);
+  setStatus(missing.length
+    ? `Modèle chargé, mais certains os n'ont pas été reconnus. Le suivi sera partiel.`
+    : `« ${label} » prêt. ${rig.drive.length} os pilotés.`);
+}
+
+function loadModelFromURL(url, ext, label) {
+  setStatus(`Chargement de « ${label} »…`);
+  const onErr = e => { console.error(e); setStatus(`Impossible de lire ce fichier : ${e.message || 'format non reconnu'}.`); };
+  if (ext === 'fbx') {
+    new FBXLoader().load(url, obj => { try { setModel(obj, label); } catch (e) { onErr(e); } }, undefined, onErr);
+  } else {
+    new GLTFLoader().load(url, g => { try { setModel(g.scene, label); } catch (e) { onErr(e); } }, undefined, onErr);
+  }
+}
+function loadModelFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (!['glb','gltf','fbx','vrm'].includes(ext)) { setStatus('Format non pris en charge. Utilise .glb, .gltf, .fbx ou .vrm.'); return; }
+  loadModelFromURL(URL.createObjectURL(file), ext === 'fbx' ? 'fbx' : 'gltf', file.name);
+}
+$('modelFile').addEventListener('change', e => { const f = e.target.files[0]; if (f) loadModelFile(f); e.target.value = ''; });
+const drop = $('drop');
+['dragenter','dragover'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) loadModelFile(f); });
+$('showSkel').addEventListener('change', e => { if (skelHelper) skelHelper.visible = e.target.checked; });
+
+loadModelFromURL('https://cdn.jsdelivr.net/gh/mrdoob/three.js@r160/examples/models/gltf/Xbot.glb', 'gltf', 'Robot de démo (Mixamo)');
+
+/* ---------------- Pose tracking ---------------- */
+let landmarker = null, landmarkerKind = null, vision = null, PoseLandmarker = null, FilesetResolver = null;
+const MODEL_URLS = {
+  lite: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+  full: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
+  heavy: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/1/pose_landmarker_heavy.task',
+};
+async function ensureLandmarker() {
+  const kind = $('complexity').value;
+  if (landmarker && landmarkerKind === kind) return;
+  setStatus('Chargement du suivi corporel…');
+  if (!PoseLandmarker) ({ PoseLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision'));
+  if (!vision) vision = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+  const opts = d => ({ baseOptions: { modelAssetPath: MODEL_URLS[kind], delegate: d }, runningMode: 'VIDEO', numPoses: 1,
+    minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+  const old = landmarker; landmarker = null;
+  try { landmarker = await PoseLandmarker.createFromOptions(vision, opts('GPU')); }
+  catch { landmarker = await PoseLandmarker.createFromOptions(vision, opts('CPU')); }
+  landmarkerKind = kind;
+  if (old) old.close();
+  setStatus('Suivi actif. Place-toi face à la caméra.');
+}
+$('complexity').addEventListener('change', () => { if (landmarker) ensureLandmarker().catch(e => setStatus('Erreur du suivi : ' + e.message)); });
+
+const video = $('video');
+let stream = null, sourceOn = false;
+async function startCamera() {
+  try {
+    await ensureLandmarker();
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    video.srcObject = stream; video.loop = false;
+    await video.play();
+    onSourceStarted();
+    $('camBtn').querySelector('span').textContent = 'Arrêter la caméra';
+  } catch (e) {
+    console.error(e);
+    const why = (e && e.name === 'NotAllowedError') ? "L'accès à la caméra a été refusé."
+      : (!window.isSecureContext ? "La caméra exige une page en https ou ouverte en local." : (e.message || 'erreur inconnue'));
+    setStatus('Caméra indisponible : ' + why);
+  }
+}
+function stopSource() {
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  video.pause(); video.removeAttribute('src'); video.srcObject = null;
+  sourceOn = false; $('pipEmpty').hidden = false;
+  $('camBtn').querySelector('span').textContent = 'Démarrer la caméra';
+  if (recording) stopRecording();
+  updateUI();
+  setStatus('Source arrêtée.');
+}
+function onSourceStarted() {
+  sourceOn = true; $('pipEmpty').hidden = true;
+  const ov = $('overlay'); ov.width = video.videoWidth || 640; ov.height = video.videoHeight || 480;
+  if (mode !== 'review') mode = 'live';
+  updateUI();
+}
+$('camBtn').addEventListener('click', () => sourceOn ? stopSource() : startCamera());
+$('videoFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    await ensureLandmarker();
+    video.srcObject = null; video.src = URL.createObjectURL(f); video.loop = true;
+    await video.play();
+    onSourceStarted();
+    $('camBtn').querySelector('span').textContent = 'Arrêter la vidéo';
+  } catch (err) { setStatus('Vidéo illisible : ' + err.message); }
+});
+$('mirror').addEventListener('change', e => $('pip').classList.toggle('mirror', e.target.checked));
+
+// MediaPipe indices
+const LM = { nose:0, earL:7, earR:8, shL:11, shR:12, elL:13, elR:14, wrL:15, wrR:16, piL:17, piR:18, inL:19, inR:20, hipL:23, hipR:24, knL:25, knR:26, anL:27, anR:28, heL:29, heR:30, toL:31, toR:32 };
+const SWAP = [0,4,5,6,1,2,3,8,7,10,9,12,11,14,13,16,15,18,17,20,19,22,21,24,23,26,25,28,27,30,29,32,31];
+
+let pts = [], vis = [];
+function readLandmarks(world) {
+  const mirror = $('mirror').checked;
+  pts.length = 0; vis.length = 0;
+  for (let i = 0; i < 33; i++) {
+    const src = world[mirror ? SWAP[i] : i];
+    pts.push(new THREE.Vector3(mirror ? -src.x : src.x, -src.y, -src.z));
+    vis.push(src.visibility ?? 1);
+  }
+}
+const V = i => pts[i];
+const seen = (...ids) => ids.every(i => vis[i] > 0.5);
+const mid = (a, b) => V(a).clone().add(V(b)).multiplyScalar(0.5);
+
+const tmpQ = new THREE.Quaternion(), tmpQ2 = new THREE.Quaternion();
+const RX_HEAD = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -0.3);
+
+function setWorld(bone, worldQ, alpha) {
+  const parentQ = bone.parent ? bone.parent.getWorldQuaternion(tmpQ2) : tmpQ2.identity();
+  const local = parentQ.invert().multiply(worldQ);
+  bone.quaternion.slerp(local, alpha);
+  bone.updateMatrixWorld(true);
+}
+function relax(bone, alpha) {
+  bone.quaternion.slerp(rig.rest.get(bone).local, alpha * 0.5);
+  bone.updateMatrixWorld(true);
+}
+
+function applyPose(world) {
+  if (!rig) return;
+  readLandmarks(world);
+  const alpha = 1 - parseFloat($('smooth').value);
+  const { map, rest, restDir } = rig;
+  const hipMid = mid(LM.hipL, LM.hipR), shMid = mid(LM.shL, LM.shR);
+  const up = shMid.clone().sub(hipMid);
+
+  const qHips = basisQuat(V(LM.hipL).clone().sub(V(LM.hipR)), up);
+  const dHips = qHips.clone().multiply(rig.restHipsQ.clone().invert());
+  const qChest = basisQuat(V(LM.shL).clone().sub(V(LM.shR)), up);
+  const dChest = qChest.clone().multiply(rig.restChestQ.clone().invert());
+
+  if (map.hips) setWorld(map.hips, dHips.clone().multiply(rest.get(map.hips).world), alpha);
+  const n = rig.chain.length;
+  rig.chain.forEach((b, i) => {
+    const t = n === 1 ? 1 : (i + 1) / n;
+    const d = dHips.clone().slerp(dChest, t);
+    setWorld(b, d.multiply(rest.get(b).world), alpha);
+  });
+
+  let dHead = dChest.clone();
+  if (seen(LM.earL, LM.earR, LM.nose)) {
+    const earMid = mid(LM.earL, LM.earR);
+    const qHead = basisQuat(V(LM.earL).clone().sub(V(LM.earR)), null, V(LM.nose).clone().sub(earMid)).multiply(RX_HEAD);
+    dHead = qHead.multiply(rig.restHipsQ.clone().invert());
+  }
+  if (map.neck) setWorld(map.neck, dChest.clone().slerp(dHead, 0.5).multiply(rest.get(map.neck).world), alpha);
+  if (map.head) setWorld(map.head, dHead.clone().multiply(rest.get(map.head).world), alpha);
+
+  const limb = (k, a, b, bMid) => {
+    const bone = map[k]; if (!bone || !restDir[k]) return;
+    const ok = bMid ? seen(a, b, bMid) : seen(a, b);
+    if (!ok) { relax(bone, alpha); return; }
+    const target = (bMid ? mid(b, bMid) : V(b).clone()).sub(V(a)).normalize();
+    const d = tmpQ.setFromUnitVectors(restDir[k], target);
+    setWorld(bone, d.clone().multiply(rest.get(bone).world), alpha);
+  };
+  limb('upperArmL', LM.shL, LM.elL); limb('lowerArmL', LM.elL, LM.wrL); limb('handL', LM.wrL, LM.piL, LM.inL);
+  limb('upperArmR', LM.shR, LM.elR); limb('lowerArmR', LM.elR, LM.wrR); limb('handR', LM.wrR, LM.piR, LM.inR);
+  if ($('legs').checked) {
+    limb('upperLegL', LM.hipL, LM.knL); limb('lowerLegL', LM.knL, LM.anL); limb('footL', LM.anL, LM.toL);
+    limb('upperLegR', LM.hipR, LM.knR); limb('lowerLegR', LM.knR, LM.anR); limb('footR', LM.anR, LM.toR);
+  } else {
+    ['upperLegL','lowerLegL','footL','upperLegR','lowerLegR','footR'].forEach(k => map[k] && relax(map[k], alpha));
+  }
+}
+
+const CONN = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32],[15,19],[16,20]];
+function drawOverlay(lms) {
+  const c = $('overlay'), g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+  if (!lms) return;
+  g.lineWidth = Math.max(2, c.width / 220);
+  g.strokeStyle = 'rgba(134,168,255,.9)';
+  for (const [a, b] of CONN) {
+    if ((lms[a].visibility ?? 1) < 0.5 || (lms[b].visibility ?? 1) < 0.5) continue;
+    g.beginPath(); g.moveTo(lms[a].x * c.width, lms[a].y * c.height); g.lineTo(lms[b].x * c.width, lms[b].y * c.height); g.stroke();
+  }
+  g.fillStyle = '#ffb547';
+  for (let i = 11; i < 33; i++) {
+    if ((lms[i].visibility ?? 1) < 0.5) continue;
+    g.beginPath(); g.arc(lms[i].x * c.width, lms[i].y * c.height, g.lineWidth * 1.3, 0, Math.PI * 2); g.fill();
+  }
+}
+
+/* ---------------- Recording & review ---------------- */
+let mode = 'idle';           // idle | live | review
+let recording = false, recStart = 0;
+let take = null;             // { bones:[...], frames:[{t, q:Float32Array}], motion:[], inT, outT }
+let playT = 0, playing = false;
+
+function fmt(t) {
+  t = Math.max(0, t);
+  const m = Math.floor(t / 60), s = Math.floor(t % 60), c = Math.floor((t * 100) % 100);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(c).padStart(2,'0')}`;
+}
+
+function startRecording() {
+  if (!rig || !sourceOn) return;
+  take = { bones: rig.drive.slice(), frames: [], motion: [], inT: 0, outT: 0 };
+  recording = true; recStart = performance.now(); mode = 'live'; playing = false;
+  updateUI();
+  setStatus('Enregistrement en cours…');
+}
+function recordFrame(now) {
+  const q = new Float32Array(take.bones.length * 4);
+  take.bones.forEach((b, i) => b.quaternion.toArray(q, i * 4));
+  const t = (now - recStart) / 1000;
+  let motion = 0;
+  const prev = take.frames[take.frames.length - 1];
+  if (prev) for (let i = 0; i < q.length; i += 4) {
+    const d = Math.abs(q[i]*prev.q[i] + q[i+1]*prev.q[i+1] + q[i+2]*prev.q[i+2] + q[i+3]*prev.q[i+3]);
+    motion += 2 * Math.acos(Math.min(1, d));
+  }
+  take.frames.push({ t, q });
+  take.motion.push(motion);
+  $('rectime').textContent = '● ' + fmt(t);
+}
+function stopRecording() {
+  recording = false;
+  if (!take || take.frames.length < 2) { take = null; updateUI(); setStatus('Prise trop courte, rien enregistré.'); return; }
+  take.inT = 0; take.outT = take.frames[take.frames.length - 1].t;
+  mode = 'review'; playT = 0; playing = true;
+  updateUI(); drawTimeline();
+  setStatus('Prise enregistrée. Glisse les poignées orange pour la couper.');
+}
+function clearTake() { take = null; recording = false; playing = false; if (mode === 'review') mode = sourceOn ? 'live' : 'idle'; updateUI(); }
+
+$('recBtn').addEventListener('click', () => recording ? stopRecording() : startRecording());
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input,select,textarea')) return;
+  if (e.code === 'KeyR' && !$('recBtn').disabled) { e.preventDefault(); $('recBtn').click(); }
+  if (e.code === 'Space' && !$('playBtn').disabled) { e.preventDefault(); $('playBtn').click(); }
+});
+
+const qa = new THREE.Quaternion(), qb = new THREE.Quaternion();
+function frameIndexAt(t) {
+  const f = take.frames; let lo = 0, hi = f.length - 1;
+  while (lo < hi) { const m = (lo + hi + 1) >> 1; if (f[m].t <= t) lo = m; else hi = m - 1; }
+  return lo;
+}
+function poseAt(t) {
+  const f = take.frames, i = frameIndexAt(t), j = Math.min(i + 1, f.length - 1);
+  const span = f[j].t - f[i].t, k = span > 0 ? (t - f[i].t) / span : 0;
+  take.bones.forEach((b, n) => {
+    qa.fromArray(f[i].q, n * 4); qb.fromArray(f[j].q, n * 4);
+    b.quaternion.copy(qa).slerp(qb, Math.min(1, Math.max(0, k)));
+  });
+}
+
+$('playBtn').addEventListener('click', () => {
+  if (!take) return;
+  if (mode !== 'review') { mode = 'review'; playT = take.inT; }
+  playing = !playing;
+  if (playing && (playT >= take.outT - 0.001 || playT < take.inT)) playT = take.inT;
+  updateUI();
+});
+$('liveBtn').addEventListener('click', () => { playing = false; mode = sourceOn ? 'live' : 'idle'; updateUI(); });
+$('cutBtn').addEventListener('click', () => {
+  if (!take) return;
+  const keep = [], motion = [];
+  take.frames.forEach((f, i) => { if (f.t >= take.inT - 1e-6 && f.t <= take.outT + 1e-6) { keep.push({ t: f.t - take.inT, q: f.q }); motion.push(take.motion[i]); } });
+  if (keep.length < 2) { setStatus('La sélection est trop courte pour être coupée.'); return; }
+  motion[0] = 0;
+  take.frames = keep; take.motion = motion;
+  take.inT = 0; take.outT = keep[keep.length - 1].t; playT = 0;
+  drawTimeline(); updateUI();
+  setStatus(`Prise coupée : ${take.outT.toFixed(2).replace('.', ',')} s conservées.`);
+});
+
+/* timeline */
+const tl = $('timeline');
+function tlX(t) { const dur = take.frames[take.frames.length - 1].t || 1; return 10 + (t / dur) * (tl.clientWidth - 20); }
+function tlT(x) { const dur = take.frames[take.frames.length - 1].t || 1; return Math.min(dur, Math.max(0, (x - 10) / (tl.clientWidth - 20) * dur)); }
+function drawTimeline() {
+  if (!take) return;
+  const dpr = Math.min(devicePixelRatio, 2), w = tl.clientWidth, h = tl.clientHeight;
+  if (tl.width !== Math.round(w * dpr)) { tl.width = Math.round(w * dpr); tl.height = Math.round(h * dpr); }
+  const g = tl.getContext('2d');
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  // motion curve
+  const f = take.frames, m = take.motion;
+  let max = 0.0001; for (const v of m) max = Math.max(max, v);
+  const cols = Math.max(1, Math.floor((w - 20) / 3));
+  const dur = f[f.length - 1].t || 1;
+  for (let c = 0; c < cols; c++) {
+    const t0 = c / cols * dur, t1 = (c + 1) / cols * dur;
+    let i = frameIndexAt(t0), peak = 0;
+    while (i < f.length && f[i].t < t1) { peak = Math.max(peak, m[i]); i++; }
+    const bh = Math.max(2, Math.sqrt(peak / max) * (h - 14));
+    const x = 10 + c * 3;
+    const tc = (t0 + t1) / 2;
+    g.fillStyle = (tc >= take.inT && tc <= take.outT) ? 'rgba(134,168,255,.75)' : 'rgba(93,103,121,.45)';
+    g.fillRect(x, (h - bh) / 2, 2, bh);
+  }
+  // outside shading
+  const xi = tlX(take.inT), xo = tlX(take.outT);
+  g.fillStyle = 'rgba(8,10,14,.55)';
+  g.fillRect(0, 0, xi, h); g.fillRect(xo, 0, w - xo, h);
+  // selection frame
+  g.strokeStyle = '#ffb547'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(xi, 1); g.lineTo(xo, 1); g.moveTo(xi, h - 1); g.lineTo(xo, h - 1); g.stroke();
+  for (const x of [xi, xo]) {
+    g.fillStyle = '#ffb547';
+    g.beginPath(); g.roundRect(x - 5, 0, 10, h, 3); g.fill();
+    g.fillStyle = '#10141b';
+    g.fillRect(x - 1, h / 2 - 8, 2, 16);
+  }
+  // playhead
+  if (mode === 'review') {
+    const xp = tlX(playT);
+    g.fillStyle = '#e7eaf0'; g.fillRect(xp - 1, 0, 2, h);
+  }
+  $('tIn').textContent = fmt(take.inT); $('tOut').textContent = fmt(take.outT); $('tPh').textContent = fmt(playT);
+  const nFrames = f.filter(x => x.t >= take.inT - 1e-6 && x.t <= take.outT + 1e-6).length;
+  $('tDur').textContent = `Durée ${(take.outT - take.inT).toFixed(2).replace('.', ',')} s · ${nFrames} images`;
+}
+let drag = null;
+tl.addEventListener('pointerdown', e => {
+  if (!take) return;
+  const r = tl.getBoundingClientRect(), x = e.clientX - r.left;
+  const di = Math.abs(x - tlX(take.inT)), dout = Math.abs(x - tlX(take.outT));
+  drag = (Math.min(di, dout) < 16) ? (di <= dout ? 'in' : 'out') : 'play';
+  tl.setPointerCapture(e.pointerId);
+  if (mode !== 'review') { mode = 'review'; }
+  playing = false; updateUI();
+  moveDrag(x);
+});
+tl.addEventListener('pointermove', e => { if (drag) moveDrag(e.clientX - tl.getBoundingClientRect().left); });
+tl.addEventListener('pointerup', () => drag = null);
+tl.addEventListener('pointercancel', () => drag = null);
+function moveDrag(x) {
+  const t = tlT(x), minGap = 0.1;
+  if (drag === 'in') { take.inT = Math.min(t, take.outT - minGap); playT = take.inT; }
+  else if (drag === 'out') { take.outT = Math.max(t, take.inT + minGap); playT = take.outT; }
+  else playT = Math.min(take.outT, Math.max(take.inT, t));
+  poseAt(playT);
+  drawTimeline();
+}
+new ResizeObserver(() => drawTimeline()).observe(tl);
+
+/* export */
+$('exportBtn').addEventListener('click', () => {
+  if (!take || !rig) return;
+  const sel = take.frames.filter(f => f.t >= take.inT - 1e-6 && f.t <= take.outT + 1e-6);
+  if (sel.length < 2) { setStatus('Sélection trop courte pour être exportée.'); return; }
+  const times = new Float32Array(sel.map(f => f.t - sel[0].t));
+  const tracks = take.bones.map((b, n) => {
+    const vals = new Float32Array(sel.length * 4);
+    sel.forEach((f, i) => { for (let c = 0; c < 4; c++) vals[i * 4 + c] = f.q[n * 4 + c]; });
+    return new THREE.QuaternionKeyframeTrack(`${b.name}.quaternion`, times, vals);
+  });
+  const clip = new THREE.AnimationClip('mocap', -1, tracks);
+  const saved = take.bones.map(b => b.quaternion.clone());
+  take.bones.forEach(b => b.quaternion.copy(rig.rest.get(b).local));
+  rig.obj.updateMatrixWorld(true);
+  setStatus('Export en cours…');
+  new GLTFExporter().parse(rig.obj, result => {
+    take.bones.forEach((b, i) => b.quaternion.copy(saved[i]));
+    const blob = new Blob([result], { type: 'model/gltf-binary' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `mocap-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.glb`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    setStatus(`Animation exportée (${(times[times.length-1]).toFixed(2).replace('.', ',')} s, ${sel.length} images).`);
+  }, err => {
+    take.bones.forEach((b, i) => b.quaternion.copy(saved[i]));
+    setStatus('Échec de l\'export : ' + (err.message || err));
+  }, { binary: true, animations: [clip] });
+});
+
+/* ---------------- UI state ---------------- */
+function updateUI() {
+  const dot = $('dot'), badge = $('badge');
+  dot.className = recording ? 'rec' : (sourceOn ? 'live' : '');
+  badge.className = 'badge' + (recording ? ' rec' : mode === 'review' ? ' review' : '');
+  badge.textContent = recording ? 'Enregistrement' : mode === 'review' ? 'Relecture' : sourceOn ? 'Direct' : 'Repos';
+  $('rectime').hidden = !recording;
+  const rb = $('recBtn'); rb.classList.toggle('on', recording); rb.disabled = !(sourceOn && rig);
+  rb.title = recording ? 'Arrêter (R)' : 'Enregistrer (R)';
+  const has = !!take && !recording;
+  $('tlhead').hidden = !has; tl.hidden = !has; $('tlEmpty').hidden = has;
+  $('tlEmpty').textContent = recording ? 'Enregistrement… appuie à nouveau sur le bouton rouge pour arrêter.'
+    : 'Démarre la caméra puis appuie sur le bouton rouge pour enregistrer une prise.';
+  $('playBtn').disabled = !has; $('cutBtn').disabled = !has; $('exportBtn').disabled = !has;
+  $('liveBtn').disabled = !(has && mode === 'review' && sourceOn);
+  $('playLabel').textContent = (playing && mode === 'review') ? 'Pause' : 'Lire';
+  $('playIcon').innerHTML = (playing && mode === 'review') ? '<path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/>' : '<path d="M4 2.5v11l9-5.5z"/>';
+  if (has) requestAnimationFrame(drawTimeline);
+}
+
+/* ---------------- Loop ---------------- */
+let lastVideoTime = -1, lastNow = performance.now();
+function tick() {
+  requestAnimationFrame(tick);
+  const now = performance.now(), dt = (now - lastNow) / 1000; lastNow = now;
+
+  if (sourceOn && landmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    let res = null;
+    try { res = landmarker.detectForVideo(video, now); } catch (e) { console.warn(e); }
+    const lms = res && res.landmarks && res.landmarks[0];
+    drawOverlay(lms);
+    if (mode === 'live' && res && res.worldLandmarks && res.worldLandmarks[0]) applyPose(res.worldLandmarks[0]);
+  }
+  if (recording) recordFrame(now);
+
+  if (mode === 'review' && take) {
+    if (playing) {
+      playT += dt;
+      if (playT > take.outT) playT = take.inT + (playT - take.outT) % Math.max(0.01, take.outT - take.inT);
+      drawTimeline();
+    }
+    poseAt(playT);
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+resize();
+renderChips();
+updateUI();
+tick();
+</script>
+</body>
+</html>
