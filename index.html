@@ -36,7 +36,9 @@
   .main{display:grid;grid-template-columns:1fr 300px;min-height:0}
   .stage{position:relative;min-height:0;overflow:hidden;background:radial-gradient(ellipse at 50% 30%,#1a2130 0%,var(--ground) 70%)}
   #three{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
-  .pip{position:absolute;left:14px;bottom:14px;width:min(30%,260px);aspect-ratio:4/3;max-width:100%;border-radius:10px;overflow:hidden;background:#0a0d12;border:1px solid var(--line-2)}
+  .pips{position:absolute;left:14px;bottom:14px;width:min(30%,260px);display:flex;flex-direction:column;gap:8px}
+  .pip{position:relative;width:100%;aspect-ratio:4/3;max-width:100%;border-radius:10px;overflow:hidden;background:#0a0d12;border:1px solid var(--line-2)}
+  .piptag{position:absolute;top:6px;right:6px;font:600 10px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:4px;background:rgba(16,20,27,.8);color:var(--muted)}
   .pip video,.pip canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
   .pip.mirror video,.pip.mirror canvas{transform:scaleX(-1)}
   .pip .empty{position:absolute;inset:0;display:grid;place-items:center;color:var(--faint);font-size:12px;text-align:center;padding:10px}
@@ -67,6 +69,8 @@
   label.opt input[type=range]{width:120px;accent-color:var(--accent)}
   select{background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:5px 8px}
   .drop{border:1px dashed var(--line-2);border-radius:10px;padding:12px;display:grid;gap:8px}
+  .calib{font:12px var(--mono);color:var(--ok);margin:0}
+  .calib.warn{color:var(--trim)}
   .drop.over{border-color:var(--accent);background:rgba(134,168,255,.06)}
 
   /* transport */
@@ -92,7 +96,7 @@
     .transport{grid-template-columns:auto 1fr;}
     .tbtns{grid-column:1 / -1;justify-content:stretch}
     .tbtns .btn{flex:1;justify-content:center}
-    .pip{width:38%}
+    .pips{width:38%}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
@@ -118,10 +122,18 @@
       <canvas id="three"></canvas>
       <div class="badge" id="badge">Repos</div>
       <div class="rectime" id="rectime" hidden>● 00:00.00</div>
-      <div class="pip mirror" id="pip">
-        <video id="video" playsinline muted></video>
-        <canvas id="overlay"></canvas>
-        <div class="empty" id="pipEmpty">Caméra éteinte</div>
+      <div class="pips">
+        <div class="pip" id="pip2" hidden>
+          <video id="video2" playsinline muted></video>
+          <canvas id="overlay2"></canvas>
+          <span class="piptag">Côté</span>
+        </div>
+        <div class="pip mirror" id="pip">
+          <video id="video" playsinline muted></video>
+          <canvas id="overlay"></canvas>
+          <div class="empty" id="pipEmpty">Caméra éteinte</div>
+          <span class="piptag">Avant</span>
+        </div>
       </div>
     </div>
 
@@ -139,7 +151,23 @@
             <input type="file" id="videoFile" accept="video/*">
           </label>
         </div>
+        <label class="opt" id="frontRow" hidden>Webcam avant <select id="frontDevice"></select></label>
         <p class="hint">Recule pour que ton corps entier soit visible. Le suivi fonctionne aussi avec le haut du corps seulement.</p>
+      </section>
+
+      <section class="sec">
+        <h2>Caméra de côté · optionnelle</h2>
+        <label class="opt">Webcam <select id="sideDevice"><option value="">Aucune</option></select></label>
+        <label class="opt">Position
+          <select id="sidePos">
+            <option value="right" selected>À ma droite</option>
+            <option value="left">À ma gauche</option>
+          </select>
+        </label>
+        <div class="row"><button class="btn grow" id="sideBtn" disabled>Activer la caméra de côté</button></div>
+        <div class="row"><button class="btn grow" id="calibBtn" disabled>Calibrer (T-pose)</button></div>
+        <p class="calib warn" id="calibInfo" hidden></p>
+        <p class="hint" id="sideHint">Démarre d'abord la caméra avant.</p>
       </section>
 
       <section class="sec">
@@ -162,7 +190,7 @@
         <label class="opt">Suivre les jambes <input type="checkbox" id="legs" checked></label>
         <label class="opt">Suivre les doigts <input type="checkbox" id="fingers" checked></label>
         <label class="opt">Suivre la tête (visage) <input type="checkbox" id="face" checked></label>
-        <label class="opt">Lissage <input type="range" id="smooth" min="0" max="0.9" step="0.05" value="0.55"></label>
+        <label class="opt">Lissage <input type="range" id="smooth" min="0" max="0.9" step="0.05" value="0.3"></label>
         <label class="opt">Précision du suivi
           <select id="complexity">
             <option value="lite">Rapide</option>
@@ -546,11 +574,15 @@ let stream = null, sourceOn = false;
 async function startCamera() {
   try {
     await ensureLandmarker();
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+    const devId = $('frontDevice').value;
+    const vc = devId ? { deviceId: { exact: devId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+                     : { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } };
+    stream = await navigator.mediaDevices.getUserMedia({ video: vc, audio: false });
     video.srcObject = stream; video.loop = false;
     await video.play();
     onSourceStarted();
     $('camBtn').querySelector('span').textContent = 'Arrêter la caméra';
+    await refreshDevices();
   } catch (e) {
     console.error(e);
     const why = (e && e.name === 'NotAllowedError') ? "L'accès à la caméra a été refusé."
@@ -559,6 +591,7 @@ async function startCamera() {
   }
 }
 function stopSource() {
+  stopSide(true);
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
   video.pause(); video.removeAttribute('src'); video.srcObject = null;
   sourceOn = false; $('pipEmpty').hidden = false;
@@ -588,18 +621,268 @@ $('videoFile').addEventListener('change', async e => {
 });
 $('mirror').addEventListener('change', e => $('pip').classList.toggle('mirror', e.target.checked));
 
+/* ---------------- Webcams & caméra de côté ---------------- */
+const side = { on: false, stream: null, landmarker: null, kind: null, res: null, resT: 0, lastTime: -1, R: null, calibrated: false, info: '' };
+const defaultSideR = () => new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), $('sidePos').value === 'left' ? Math.PI / 2 : -Math.PI / 2);
+side.R = defaultSideR();
+let videoDevices = [];
+
+async function refreshDevices() {
+  try { videoDevices = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'); } catch { videoDevices = []; }
+  const frontId = stream?.getVideoTracks()[0]?.getSettings().deviceId || $('frontDevice').value;
+  const sideId = side.stream?.getVideoTracks()[0]?.getSettings().deviceId || $('sideDevice').value;
+  const fill = (sel, cur) => {
+    sel.replaceChildren(...videoDevices.map((d, i) => { const o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || `Webcam ${i + 1}`; return o; }));
+    if (cur && videoDevices.some(d => d.deviceId === cur)) sel.value = cur;
+  };
+  fill($('frontDevice'), frontId);
+  fill($('sideDevice'), sideId);
+  if (!side.on && (!sideId || sideId === frontId)) {
+    const other = videoDevices.find(d => d.deviceId !== frontId);
+    if (other) $('sideDevice').value = other.deviceId;
+  }
+  $('frontRow').hidden = videoDevices.length < 2;
+  updateSideUI();
+}
+navigator.mediaDevices?.addEventListener?.('devicechange', () => { if (stream) refreshDevices(); });
+
+$('frontDevice').addEventListener('change', async () => {
+  if (!stream) return;
+  if ($('frontDevice').value === $('sideDevice').value && side.on) stopSide(true);
+  stream.getTracks().forEach(t => t.stop()); stream = null;
+  await startCamera();
+});
+
+function updateSideUI() {
+  const frontId = stream?.getVideoTracks()[0]?.getSettings().deviceId;
+  const others = videoDevices.filter(d => d.deviceId !== frontId).length;
+  $('sideBtn').disabled = !side.on && !(stream && others > 0);
+  $('sideBtn').textContent = side.on ? 'Arrêter la caméra de côté' : 'Activer la caméra de côté';
+  $('calibBtn').disabled = !side.on || !!calib;
+  $('calibBtn').textContent = calib ? 'Calibration en cours…' : (side.calibrated ? 'Recalibrer (T-pose)' : 'Calibrer (T-pose)');
+  const ci = $('calibInfo');
+  ci.hidden = !side.on;
+  ci.className = 'calib' + (side.calibrated ? '' : ' warn');
+  ci.textContent = side.calibrated ? side.info : 'Pas encore calibrée : angle supposé de 90°.';
+  $('sideHint').textContent = !stream ? "Démarre d'abord la caméra avant."
+    : others === 0 ? 'Une seule webcam détectée. Branche la deuxième, elle apparaîtra ici.'
+    : side.on ? 'Mets-toi face à la caméra avant, bras tendus sur les côtés, puis lance la calibration. Refais-la si tu bouges une webcam.'
+    : 'Place la 2e webcam sur le côté, à environ 90° de la première, à hauteur de poitrine, et vise ton corps entier.';
+}
+
+async function startSide() {
+  const id = $('sideDevice').value;
+  const frontId = stream?.getVideoTracks()[0]?.getSettings().deviceId;
+  if (!id || id === frontId) { setStatus('Choisis pour le côté une webcam différente de la caméra avant.'); return; }
+  try {
+    setStatus('Démarrage de la caméra de côté…');
+    side.stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: id }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
+    const v = $('video2'); v.srcObject = side.stream; await v.play();
+    await ensureSideLandmarker();
+    const ov = $('overlay2'); ov.width = v.videoWidth || 640; ov.height = v.videoHeight || 480;
+    side.on = true; side.lastTime = -1; $('pip2').hidden = false; resetFilters();
+    setStatus(side.calibrated ? 'Caméra de côté active.' : 'Caméra de côté active. Lance la calibration pour de meilleurs résultats.');
+  } catch (e) {
+    console.error(e);
+    stopSide(true);
+    const why = e.name === 'NotReadableError' ? 'la webcam est déjà utilisée, ou le port USB est saturé. Essaie un autre port USB.'
+      : e.name === 'OverconstrainedError' ? "cette webcam n'est plus disponible." : (e.message || 'erreur inconnue');
+    setStatus('Caméra de côté indisponible : ' + why);
+  }
+  updateSideUI();
+}
+async function ensureSideLandmarker() {
+  const kind = $('complexity').value;
+  if (side.landmarker && side.kind === kind) return;
+  const old = side.landmarker; side.landmarker = null;
+  side.landmarker = await createTask(PoseLandmarker, MODEL_URLS[kind], { numPoses: 1, minPoseDetectionConfidence: 0.5, minPosePresenceConfidence: 0.5, minTrackingConfidence: 0.5 });
+  side.kind = kind;
+  if (old) old.close();
+}
+function stopSide(silent) {
+  if (side.stream) side.stream.getTracks().forEach(t => t.stop());
+  side.stream = null; $('video2').srcObject = null;
+  side.on = false; side.res = null; calib = null;
+  $('pip2').hidden = true; resetFilters();
+  if (!silent) setStatus('Caméra de côté arrêtée.');
+  updateSideUI();
+}
+$('sideBtn').addEventListener('click', () => side.on ? stopSide() : startSide());
+$('sideDevice').addEventListener('change', async () => { if (side.on) { stopSide(true); side.calibrated = false; side.R = defaultSideR(); await startSide(); } });
+$('sidePos').addEventListener('change', () => { side.calibrated = false; side.R = defaultSideR(); resetFilters(); updateSideUI(); });
+$('complexity').addEventListener('change', () => { if (side.on) ensureSideLandmarker().catch(e => setStatus('Erreur du suivi de côté : ' + e.message)); });
+
+/* --- géométrie commune --- */
+const toF = w => w.map(p => new THREE.Vector3(p.x, -p.y, -p.z));   // repère caméra avant : x droite image, y haut, z vers la caméra
+const visOf = w => w.map(p => p.visibility ?? 1);
+const L_IDX = [11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31];
+
+// le suivi de côté confond parfois gauche et droite : on garde l'étiquetage qui colle le mieux à la vue avant
+function sideSwapNeeded(fp, fv, sp) {
+  let same = 0, swp = 0;
+  for (const i of L_IDX) {
+    const j = i + 1, w = Math.min(fv[i], fv[j]);
+    same += w * (sp[i].distanceTo(fp[i]) + sp[j].distanceTo(fp[j]));
+    swp += w * (sp[j].distanceTo(fp[i]) + sp[i].distanceTo(fp[j]));
+  }
+  return swp < same * 0.7;
+}
+const swapArr = a => SWAP.map(k => a[k]);
+
+/* --- calibration (rotation entre les deux caméras, méthode de Horn) --- */
+let calib = null;
+const CALIB_FRAMES = 45;
+function jacobi4(A) {
+  const a = A.map(r => r.slice()), V = [[1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]];
+  for (let sweep = 0; sweep < 60; sweep++) {
+    let off = 0;
+    for (let p = 0; p < 3; p++) for (let q = p + 1; q < 4; q++) off += a[p][q] * a[p][q];
+    if (off < 1e-18) break;
+    for (let p = 0; p < 3; p++) for (let q = p + 1; q < 4; q++) {
+      if (Math.abs(a[p][q]) < 1e-15) continue;
+      const th = (a[q][q] - a[p][p]) / (2 * a[p][q]);
+      const t = (th >= 0 ? 1 : -1) / (Math.abs(th) + Math.sqrt(th * th + 1));
+      const c = 1 / Math.sqrt(t * t + 1), s = t * c;
+      for (let k = 0; k < 4; k++) { const kp = a[k][p], kq = a[k][q]; a[k][p] = c * kp - s * kq; a[k][q] = s * kp + c * kq; }
+      for (let k = 0; k < 4; k++) { const pk = a[p][k], qk = a[q][k]; a[p][k] = c * pk - s * qk; a[q][k] = s * pk + c * qk; }
+      for (let k = 0; k < 4; k++) { const kp = V[k][p], kq = V[k][q]; V[k][p] = c * kp - s * kq; V[k][q] = s * kp + c * kq; }
+    }
+  }
+  return { values: [0,1,2,3].map(i => a[i][i]), vectors: [0,1,2,3].map(i => [V[0][i], V[1][i], V[2][i], V[3][i]]) };
+}
+function hornQuat(S) {
+  const [xx, xy, xz, yx, yy, yz, zx, zy, zz] = S;
+  const N = [[xx + yy + zz, yz - zy, zx - xz, xy - yx],
+             [yz - zy, xx - yy - zz, xy + yx, zx + xz],
+             [zx - xz, xy + yx, -xx + yy - zz, yz + zy],
+             [xy - yx, zx + xz, yz + zy, -xx - yy + zz]];
+  const { values, vectors } = jacobi4(N);
+  let b = 0; for (let i = 1; i < 4; i++) if (values[i] > values[b]) b = i;
+  const v = vectors[b];
+  return new THREE.Quaternion(v[1], v[2], v[3], v[0]).normalize();
+}
+$('calibBtn').addEventListener('click', () => {
+  if (!side.on) return;
+  calib = { phase: 'count', t0: performance.now(), S: new Array(9).fill(0), pairs: [], n: 0 };
+  updateSideUI();
+});
+function calibStep(now, frontW, sideW) {
+  if (calib.phase === 'count') {
+    const left = 3 - Math.floor((now - calib.t0) / 1000);
+    if (left > 0) { setStatus(`Calibration : mets-toi en T-pose, face à la caméra avant, bras tendus sur les côtés… ${left}`); return; }
+    calib.phase = 'collect'; calib.t0 = now;
+  }
+  if (now - calib.t0 > 10000) {
+    calib = null; updateSideUI();
+    setStatus('Calibration impossible : les deux caméras doivent bien te voir en entier. Vérifie le cadrage et réessaie.');
+    return;
+  }
+  if (!frontW || !sideW) { setStatus('Calibration : les deux caméras doivent te voir…'); return; }
+  const fp = toF(frontW), fv = visOf(frontW);
+  let sp = toF(sideW), sv = visOf(sideW);
+  const R0 = defaultSideR();
+  if (sideSwapNeeded(fp, fv, sp.map(v => v.clone().applyQuaternion(R0)))) { sp = swapArr(sp); sv = swapArr(sv); }
+  let used = 0;
+  for (let i = 11; i < 33; i++) {
+    if (fv[i] < 0.7 || sv[i] < 0.7) continue;
+    const a = sp[i], b = fp[i], S = calib.S;
+    S[0] += a.x * b.x; S[1] += a.x * b.y; S[2] += a.x * b.z;
+    S[3] += a.y * b.x; S[4] += a.y * b.y; S[5] += a.y * b.z;
+    S[6] += a.z * b.x; S[7] += a.z * b.y; S[8] += a.z * b.z;
+    calib.pairs.push([a, b]); used++;
+  }
+  if (used >= 6) calib.n++;
+  setStatus(`Calibration : ne bouge plus… ${Math.min(100, Math.round(calib.n / CALIB_FRAMES * 100))} %`);
+  if (calib.n >= CALIB_FRAMES) finishCalib();
+}
+function finishCalib() {
+  const q = hornQuat(calib.S);
+  let err = 0;
+  for (const [a, b] of calib.pairs) err += a.clone().applyQuaternion(q).distanceToSquared(b);
+  const rms = Math.sqrt(err / Math.max(1, calib.pairs.length));
+  const axis = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+  const angle = THREE.MathUtils.radToDeg(Math.acos(Math.max(-1, Math.min(1, axis.z))));
+  calib = null;
+  if (angle < 25) {
+    updateSideUI();
+    setStatus(`Calibration refusée : les deux webcams sont presque alignées (${Math.round(angle)}°). Place la 2e plus sur le côté.`);
+    return;
+  }
+  side.R = q; side.calibrated = true;
+  side.info = `Calibrée · ${Math.round(angle)}° entre les caméras · écart moyen ${(rms * 100).toFixed(1).replace('.', ',')} cm`;
+  resetFilters(); updateSideUI();
+  setStatus('Calibration terminée. La caméra de côté est prise en compte.');
+}
+
+/* --- fusion des deux vues --- */
+// chaque caméra voit bien en largeur/hauteur mais mal en profondeur (le long de son axe de visée) :
+// on pondère donc chaque vue par axe, puis on résout le compromis au sens des moindres carrés
+const DEPTH_TRUST = 0.15;
+const AX_F = new THREE.Vector3(0, 0, 1);
+const _M3 = new THREE.Matrix3();
+function weightMat(a, w) {
+  const k = 1 - DEPTH_TRUST;
+  return [w * (1 - k * a.x * a.x), -w * k * a.x * a.y, -w * k * a.x * a.z,
+          -w * k * a.y * a.x, w * (1 - k * a.y * a.y), -w * k * a.y * a.z,
+          -w * k * a.z * a.x, -w * k * a.z * a.y, w * (1 - k * a.z * a.z)];
+}
+const mulv = (M, v) => new THREE.Vector3(M[0] * v.x + M[1] * v.y + M[2] * v.z, M[3] * v.x + M[4] * v.y + M[5] * v.z, M[6] * v.x + M[7] * v.y + M[8] * v.z);
+function fusePose(frontW, sideW) {
+  const fp = toF(frontW), fv = visOf(frontW);
+  if (!sideW) return { pts: fp, vis: fv };
+  let sp = toF(sideW).map(v => v.applyQuaternion(side.R)), sv = visOf(sideW);
+  if (sideSwapNeeded(fp, fv, sp)) { sp = swapArr(sp); sv = swapArr(sv); }
+  const aS = AX_F.clone().applyQuaternion(side.R);
+  const pts = [], vis = [];
+  for (let i = 0; i < 33; i++) {
+    const wf = Math.max(0, fv[i] - 0.2), ws = i < 11 ? 0 : Math.max(0, sv[i] - 0.2);   // visage : vue avant seulement
+    if (ws < 1e-3) { pts.push(fp[i]); vis.push(fv[i]); continue; }
+    if (wf < 1e-3) { pts.push(sp[i]); vis.push(sv[i]); continue; }
+    const A = weightMat(AX_F, wf), B = weightMat(aS, ws);
+    const Ssum = A.map((x, j) => x + B[j]);
+    _M3.set(...Ssum);
+    if (Math.abs(_M3.determinant()) < 1e-9) { pts.push(fp[i]); vis.push(fv[i]); continue; }
+    _M3.invert();
+    pts.push(mulv(A, fp[i]).add(mulv(B, sp[i])).applyMatrix3(_M3));
+    vis.push(Math.max(fv[i], sv[i]));
+  }
+  return { pts, vis };
+}
+
+/* --- filtre anti-tremblement (One Euro) --- */
+class OneEuro {
+  constructor(minCutoff, beta, dCutoff = 1) { this.minCutoff = minCutoff; this.beta = beta; this.dCutoff = dCutoff; this.x = null; this.dx = 0; this.t = 0; }
+  static a(cutoff, dt) { const tau = 1 / (2 * Math.PI * cutoff); return 1 / (1 + tau / dt); }
+  filter(x, t) {
+    if (this.x === null) { this.x = x; this.t = t; return x; }
+    const dt = Math.max(1e-3, t - this.t); this.t = t;
+    this.dx += OneEuro.a(this.dCutoff, dt) * ((x - this.x) / dt - this.dx);
+    this.x += OneEuro.a(this.minCutoff + this.beta * Math.abs(this.dx), dt) * (x - this.x);
+    return this.x;
+  }
+}
+let filters = [], lastFilterT = 0;
+function resetFilters() { filters = []; }
+function filterPose(F, t) {
+  if (t - lastFilterT > 0.5) filters = [];
+  lastFilterT = t;
+  if (!filters.length) for (let i = 0; i < 99; i++) filters.push(new OneEuro(1.2, 10));
+  F.pts.forEach((p, i) => { p.x = filters[i * 3].filter(p.x, t); p.y = filters[i * 3 + 1].filter(p.y, t); p.z = filters[i * 3 + 2].filter(p.z, t); });
+  return F;
+}
+
 // MediaPipe indices
 const LM = { nose:0, earL:7, earR:8, shL:11, shR:12, elL:13, elR:14, wrL:15, wrR:16, piL:17, piR:18, inL:19, inR:20, hipL:23, hipR:24, knL:25, knR:26, anL:27, anR:28, heL:29, heR:30, toL:31, toR:32 };
 const SWAP = [0,4,5,6,1,2,3,8,7,10,9,12,11,14,13,16,15,18,17,20,19,22,21,24,23,26,25,28,27,30,29,32,31];
 
 let pts = [], vis = [];
-function readLandmarks(world) {
+function readLandmarks(F, Fv) {
   const mirror = $('mirror').checked;
   pts.length = 0; vis.length = 0;
   for (let i = 0; i < 33; i++) {
-    const src = world[mirror ? SWAP[i] : i];
-    pts.push(new THREE.Vector3(mirror ? -src.x : src.x, -src.y, -src.z));
-    vis.push(src.visibility ?? 1);
+    const k = mirror ? SWAP[i] : i, src = F[k];
+    pts.push(new THREE.Vector3(mirror ? -src.x : src.x, src.y, src.z));
+    vis.push(Fv[k]);
   }
 }
 const V = i => pts[i];
@@ -658,9 +941,9 @@ function faceHeadQuat(faceRes) {
   return basisQuat(X, Y).multiply(RX_FACE);
 }
 
-function applyPose(world, poseLms, handRes, faceRes) {
+function applyPose(F, Fv, poseLms, handRes, faceRes) {
   if (!rig) return;
-  readLandmarks(world);
+  readLandmarks(F, Fv);
   const alpha = 1 - parseFloat($('smooth').value);
   const { map, rest, restDir } = rig;
   const hipMid = mid(LM.hipL, LM.hipR), shMid = mid(LM.shL, LM.shR);
@@ -742,6 +1025,17 @@ function applyPose(world, poseLms, handRes, faceRes) {
 const CONN = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32]];
 const HAND_CONN = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[0,17],[17,18],[18,19],[19,20]];
 const FACE_PTS = [33, 263, 1, 10, 152, 61, 291];
+function drawSideOverlay(lms) {
+  const c = $('overlay2'), g = c.getContext('2d');
+  g.clearRect(0, 0, c.width, c.height);
+  if (!lms) return;
+  const lw = Math.max(2, c.width / 220);
+  g.lineWidth = lw; g.strokeStyle = 'rgba(134,168,255,.9)';
+  for (const [a, b] of CONN) {
+    if ((lms[a].visibility ?? 1) < 0.5 || (lms[b].visibility ?? 1) < 0.5) continue;
+    g.beginPath(); g.moveTo(lms[a].x * c.width, lms[a].y * c.height); g.lineTo(lms[b].x * c.width, lms[b].y * c.height); g.stroke();
+  }
+}
 function drawOverlay(lms, handRes, faceRes) {
   const c = $('overlay'), g = c.getContext('2d');
   g.clearRect(0, 0, c.width, c.height);
@@ -987,7 +1281,23 @@ function tick() {
     if (faceLandmarker && $('face').checked) { try { fres = faceLandmarker.detectForVideo(video, now); } catch (e) { console.warn(e); } }
     const lms = res && res.landmarks && res.landmarks[0];
     drawOverlay(lms, hres, fres);
-    if (mode === 'live' && res && res.worldLandmarks && res.worldLandmarks[0]) applyPose(res.worldLandmarks[0], lms, hres, fres);
+
+    let sideW = null;
+    if (side.on && side.landmarker) {
+      const v2 = $('video2');
+      if (v2.readyState >= 2 && v2.currentTime !== side.lastTime) {
+        side.lastTime = v2.currentTime;
+        try { side.res = side.landmarker.detectForVideo(v2, now); side.resT = now; } catch (e) { console.warn(e); }
+        drawSideOverlay(side.res && side.res.landmarks && side.res.landmarks[0]);
+      }
+      if (now - side.resT < 200) sideW = (side.res && side.res.worldLandmarks && side.res.worldLandmarks[0]) || null;
+    }
+    const frontW = (res && res.worldLandmarks && res.worldLandmarks[0]) || null;
+    if (calib) calibStep(now, frontW, sideW);
+    if (mode === 'live' && frontW) {
+      const F = filterPose(fusePose(frontW, calib ? null : sideW), now / 1000);
+      applyPose(F.pts, F.vis, lms, hres, fres);
+    }
   }
   if (recording) recordFrame(now);
 
