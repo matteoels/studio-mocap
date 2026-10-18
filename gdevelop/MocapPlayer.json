@@ -3,7 +3,7 @@
   "authorIds": [],
   "category": "Movement",
   "dependencies": [],
-  "description": "Rejoue dans GDevelop les animations enregistrées avec **Studio Mocap** (mode « Objet tenu ») : tu bouges un cube coloré devant ta webcam, et l'objet 3D ou la caméra refait exactement le même mouvement.\n\n- Comportement « Animation enregistrée » pour n'importe quel objet 3D.\n- Actions pour la caméra 3D de n'importe quel calque.\n- L'animation part de la position et de la rotation actuelles de l'objet ou de la caméra.\n- Boucle, vitesse (même à l'envers), échelle, pause, reprise, aller à un instant.",
+  "description": "Rejoue dans GDevelop les animations enregistrées avec **Studio Mocap** (mode « Objet tenu ») : tu bouges le cube à marqueurs devant ta webcam, et l'objet 3D ou la caméra refait exactement le même mouvement.\n\n- Comportement « Animation enregistrée » pour n'importe quel objet 3D.\n- Actions pour la caméra 3D de n'importe quel calque.\n- L'animation part de la position et de la rotation actuelles de l'objet ou de la caméra.\n- Boucle, aller-retour (l'animation se rejoue à l'envers pour revenir au point de départ), vitesse (même à l'envers), échelle, pause, reprise, aller à un instant.",
   "dimension": "3D",
   "extensionNamespace": "",
   "fullName": "Mocap Player (animations Studio Mocap)",
@@ -24,7 +24,7 @@
     "caméra",
     "webcam"
   ],
-  "version": "1.0.0",
+  "version": "1.1.0",
   "globalVariables": [],
   "sceneVariables": [],
   "eventsFunctions": [
@@ -163,6 +163,7 @@
             "      this.applyPosition = true;",
             "      this.applyRotation = true;",
             "      this.relativeToAngle = false;",
+            "      this.pingPong = false; // aller-retour : rejoue l'animation à l'envers après la fin",
             "      this.start = null; // état au lancement",
             "      this._p = [0, 0, 0];",
             "      this._q = new THREE.Quaternion();",
@@ -172,17 +173,26 @@
             "      if (!anim) return false;",
             "      Object.assign(this, opts);",
             "      this.anim = anim;",
-            "      this.time = 0;",
+            "      this.time = this.speed < 0 ? this.total() : 0; // vitesse négative : part de la fin",
             "      this.playing = true;",
             "      this.finished = false;",
             "      this.start = start;",
             "      return true;",
             "    }",
+            "    // Durée totale d'un passage (aller + retour en mode aller-retour)",
+            "    total() {",
+            "      return this.anim ? this.anim.duration * (this.pingPong ? 2 : 1) : 0;",
+            "    }",
+            "    // Instant de l'enregistrement montré : à l'aller, puis en remontant le temps au retour",
+            "    sampleTime() {",
+            "      const d = this.anim.duration;",
+            "      return this.pingPong && this.time > d ? 2 * d - this.time : this.time;",
+            "    }",
             "    // Avance le temps ; renvoie false s'il n'y a rien à appliquer",
             "    advance(dt) {",
             "      if (!this.anim || !this.playing) return false;",
             "      this.time += dt * this.speed;",
-            "      const d = this.anim.duration;",
+            "      const d = this.total();",
             "      if (d <= 0) { this.time = 0; }",
             "      else if (this.loop) { this.time = ((this.time % d) + d) % d; }",
             "      else if (this.time >= d || this.time < 0) {",
@@ -194,7 +204,7 @@
             "    }",
             "    // Décalage de position en pixels GDevelop, et rotation relative dans le monde affiché",
             "    current() {",
-            "      sample(this.anim, this.time, this._p, this._q);",
+            "      sample(this.anim, this.sampleTime(), this._p, this._q);",
             "      // monde affiché (Three.js) : X droite, Y loin de la webcam, Z haut",
             "      let x = this._p[0] * this.scale, y = this._p[1] * this.scale, z = this._p[2] * this.scale;",
             "      if (this.relativeToAngle && this.start) {",
@@ -300,6 +310,7 @@
             "      applyPosition: !!a('ApplyPosition', true),",
             "      applyRotation: !!a('ApplyRotation', true),",
             "      relativeToAngle: !!a('RelativeToAngle', false),",
+            "      pingPong: !!a('PingPong', false),",
             "    };",
             "  },",
             "  restore(target, player, isCamera, runtimeScene, layer) {",
@@ -324,7 +335,7 @@
       "functionType": "Action",
       "group": "Caméra",
       "name": "PlayOnCamera",
-      "sentence": "Jouer l'animation enregistrée sur la caméra du calque _PARAM2_ (boucle : _PARAM3_, vitesse ×_PARAM4_, échelle _PARAM5_ px/cm)",
+      "sentence": "Jouer l'animation enregistrée sur la caméra du calque _PARAM2_ (boucle : _PARAM3_, aller-retour : _PARAM9_, vitesse ×_PARAM4_, échelle _PARAM5_ px/cm)",
       "events": [
         {
           "type": "BuiltinCommonInstructions::JsCode",
@@ -397,6 +408,14 @@
           "defaultValue": "yes",
           "optional": true,
           "longDescription": "Oui : « s'éloigner de la webcam » devient « avancer dans la direction où regarde la caméra »."
+        },
+        {
+          "description": "Aller-retour (rejouer à l'envers après la fin)",
+          "name": "PingPong",
+          "type": "yesorno",
+          "defaultValue": "no",
+          "optional": true,
+          "longDescription": "Oui : à la fin, l'animation se rejoue à l'envers jusqu'au début, donc l'objet ou la caméra revient exactement à sa position et à sa rotation de départ. Avec la boucle, l'aller-retour se répète sans à-coup."
         }
       ],
       "objectGroups": []
@@ -775,7 +794,7 @@
           "functionType": "Action",
           "group": "Animation enregistrée",
           "name": "Play",
-          "sentence": "Jouer l'animation enregistrée sur _PARAM0_ (boucle : _PARAM3_, vitesse ×_PARAM4_, échelle _PARAM5_ px/cm)",
+          "sentence": "Jouer l'animation enregistrée sur _PARAM0_ (boucle : _PARAM3_, aller-retour : _PARAM9_, vitesse ×_PARAM4_, échelle _PARAM5_ px/cm)",
           "events": [
             {
               "type": "BuiltinCommonInstructions::JsCode",
@@ -852,6 +871,14 @@
               "defaultValue": "no",
               "optional": true,
               "longDescription": "Oui : « s'éloigner de la webcam » devient « avancer dans la direction de l'objet / de la caméra »."
+            },
+            {
+              "description": "Aller-retour (rejouer à l'envers après la fin)",
+              "name": "PingPong",
+              "type": "yesorno",
+              "defaultValue": "no",
+              "optional": true,
+              "longDescription": "Oui : à la fin, l'animation se rejoue à l'envers jusqu'au début, donc l'objet ou la caméra revient exactement à sa position et à sa rotation de départ. Avec la boucle, l'aller-retour se répète sans à-coup."
             }
           ],
           "objectGroups": []
@@ -991,7 +1018,7 @@
                 "const ext = gdjs.__mocapPlayerExtension;",
                 "const player = ext.player(behavior);",
                 "if (!player.anim) return;",
-                "player.time = Math.max(0, Math.min(player.anim.duration, eventsFunctionContext.getArgument(\"Time\")));",
+                "player.time = Math.max(0, Math.min(player.total(), eventsFunctionContext.getArgument(\"Time\")));",
                 "player.finished = false;",
                 "ext.Core.applyToObject(object, player);"
               ],
@@ -1095,7 +1122,7 @@
           "objectGroups": []
         },
         {
-          "description": "Temps actuel de l'animation (secondes).",
+          "description": "Temps écoulé depuis le début du passage en cours (secondes, aller + retour en mode aller-retour).",
           "fullName": "Temps de l'animation",
           "functionType": "Expression",
           "group": "Animation enregistrée",
@@ -1135,7 +1162,7 @@
           }
         },
         {
-          "description": "Durée de l'animation en cours (secondes).",
+          "description": "Durée d'un passage de l'animation en cours (secondes) : deux fois la durée enregistrée en mode aller-retour.",
           "fullName": "Durée de l'animation",
           "functionType": "Expression",
           "group": "Animation enregistrée",
@@ -1149,7 +1176,7 @@
                 "const behavior = object.getBehavior(eventsFunctionContext.getBehaviorName(\"Behavior\"));",
                 "const ext = gdjs.__mocapPlayerExtension;",
                 "const player = ext.player(behavior);",
-                "eventsFunctionContext.returnValue = player.anim ? player.anim.duration : 0;"
+                "eventsFunctionContext.returnValue = player.total();"
               ],
               "parameterObjects": "Object",
               "useStrict": true,

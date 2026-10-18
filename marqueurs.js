@@ -47,7 +47,7 @@ function refineEdges(g, w, h, quad) {
     const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
     if (len < 6) return null;
     const d = [dx / len, dy / len], nrm = [d[1], -d[0]]; // vers l'extérieur (coins dans le sens horaire à l'écran)
-    const R = Math.max(2, Math.min(6, len * 0.06));
+    const R = Math.max(3, Math.min(9, len * 0.09));
     const count = Math.max(6, Math.min(30, Math.round(len / 3)));
     const pts = [];
     for (let k = 0; k < count; k++) {
@@ -60,14 +60,14 @@ function refineEdges(g, w, h, quad) {
         const gr = prof[i + 1] - prof[i - 1]; // sombre dedans -> clair dehors : gradient positif
         if (gr > best) { best = gr; bo = i; }
       }
-      if (best < 12 || bo <= 1 || bo >= prof.length - 2) continue;
+      if (best < 8 || bo <= 1 || bo >= prof.length - 2) continue;
       const gm = prof[bo] - prof[bo - 2], gp = prof[bo + 2] - prof[bo];
       const den = gm - 2 * best + gp;
       const off = Math.abs(den) > 1e-6 ? 0.5 * (gm - gp) / den : 0;
       const o = -R + (bo + Math.max(-0.5, Math.min(0.5, off))) * 0.5;
       pts.push([px + nrm[0] * o, py + nrm[1] * o]);
     }
-    if (pts.length < Math.max(5, count * 0.7)) return null; // bord caché ou flou : coins peu fiables
+    if (pts.length < Math.max(5, count * 0.55)) return null; // bord caché ou trop flou : coins peu fiables
     let mx = 0, my = 0;
     for (const p of pts) { mx += p[0]; my += p[1]; }
     mx /= pts.length; my /= pts.length;
@@ -79,7 +79,7 @@ function refineEdges(g, w, h, quad) {
     // écart des points au bord ajusté : un côté courbé ou cassé (doigt) est refusé
     let e2 = 0;
     for (const p of pts) { const ex = p[0] - mx, ey = p[1] - my; const dist = ex * dd[1] - ey * dd[0]; e2 += dist * dist; }
-    if (Math.sqrt(e2 / pts.length) > 0.6 + len * 0.004) return null;
+    if (Math.sqrt(e2 / pts.length) > 0.8 + len * 0.008) return null;
     lines.push({ p: [mx, my], d: dd });
   }
   const out = [];
@@ -107,7 +107,8 @@ export class MarkerTracker {
     this.last = null;
   }
   isCalibrated() { return true; } // rien à calibrer
-  reset() { this.prev = null; }
+  _why(r) { if (this.stats) this.stats[r] = (this.stats[r] || 0) + 1; return null; }
+  reset() { this.prev = this.prev0 = null; this.lastRead = -1e9; }
 
   // ---- 1. Trouver les marqueurs dans l'image ----
   detect(img) {
@@ -144,6 +145,8 @@ export class MarkerTracker {
     visited.fill(0);
     const minSide = 12, maxSide = Math.max(w, h) * 0.95;
     const found = new Map();
+    const unread = [];
+    this._unread = unread;
     const rowMin = new Int32Array(h), rowMax = new Int32Array(h), colMin = new Int32Array(w), colMax = new Int32Array(w);
     for (let p0 = 0; p0 < N; p0++) {
       if (!dark[p0] || visited[p0]) continue;
@@ -192,13 +195,18 @@ export class MarkerTracker {
       }
       if (minEdge < 9 || maxEdge > 4 * minEdge) continue;
       const code = this._read(g, data, w, h, quad);
-      if (!code) continue;
+      if (!code) {
+        // illisible (flou, reflet…) : gardé pour le suivi à partir de la pose prédite
+        if (unread.length < 40) { const sh = refineEdges(g, w, h, quad); unread.push({ corners: sh || quad, area: qa, sharp: !!sh }); }
+        continue;
+      }
       const corners0 = [0, 1, 2, 3].map((i) => quad[(code.s + i) % 4]);
-      const corners = refineEdges(g, w, h, corners0);
-      if (!corners) continue;
+      // bords nets : coins au sous-pixel ; image floue : coins du contour (un peu moins précis)
+      const sharp = refineEdges(g, w, h, corners0);
+      const corners = sharp || corners0;
       const prevF = found.get(code.id);
       if (prevF && prevF.area >= qa) continue; // le même ID deux fois : on garde le plus grand
-      found.set(code.id, { id: code.id, corners, area: qa, side: Math.sqrt(qa), errors: code.err });
+      found.set(code.id, { id: code.id, corners, area: qa, side: Math.sqrt(qa), sharp: !!sharp });
     }
     return [...found.values()];
   }
@@ -221,13 +229,13 @@ export class MarkerTracker {
         if (v < lo) lo = v; if (v > hi) hi = v;
       }
     }
-    if (hi - lo < 30) return null;
+    if (hi - lo < 20) return this._why('contraste');
     const thr = (lo + hi) / 2;
     let borderErr = 0;
     for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) {
       if ((i === 0 || i === 5 || j === 0 || j === 5) && cells[i * 6 + j] > thr) borderErr++;
     }
-    if (borderErr > 1) return null;
+    if (borderErr > 2) return this._why('cadre');
     // la marge blanche tout autour doit être visible (sinon un doigt touche le marqueur : coins faux)
     let dimOut = 0;
     const ring = [[-0.4, -0.4], [6.4, -0.4], [6.4, 6.4], [-0.4, 6.4]];
@@ -238,16 +246,31 @@ export class MarkerTracker {
     // blanc de référence : les cases blanches du marqueur
     let wsum = 0, wn = 0;
     for (let i = 1; i < 5; i++) for (let j = 1; j < 5; j++) if (cells[i * 6 + j] > thr) { wsum += cells[i * 6 + j]; wn++; }
-    const white = wn ? wsum / wn : hi, ringMin = lo + (white - lo) * 0.65;
-    for (const [a, b] of ring) {
+    const white = wn ? wsum / wn : hi, ringMin = lo + (white - lo) * 0.6;
+    // teinte du papier blanc sous cette lumière (une lampe chaude le rend orangé)
+    const rgbAt = (a, b) => {
       const [x, y] = applyH(H, a, b);
-      if (bilinear(g, w, h, x, y) < ringMin) { dimOut++; continue; }
-      // papier blanc = gris neutre ; un doigt (peau) est coloré
       const px = Math.round(Math.min(w - 1, Math.max(0, x))), py = Math.round(Math.min(h - 1, Math.max(0, y))), k = (py * w + px) * 4;
-      const mx = Math.max(rgba[k], rgba[k + 1], rgba[k + 2]), mn = Math.min(rgba[k], rgba[k + 1], rgba[k + 2]);
-      if (mx > 0 && (mx - mn) / mx > 0.3) dimOut++;
+      return [rgba[k], rgba[k + 1], rgba[k + 2], x, y];
+    };
+    let pr = 0, pg = 0, pb = 0, pn = 0;
+    for (let i = 1; i < 5; i++) for (let j = 1; j < 5; j++) if (cells[i * 6 + j] > thr) {
+      const c = rgbAt(j + 0.5, i + 0.5); pr += c[0]; pg += c[1]; pb += c[2]; pn++;
     }
-    if (dimOut > 1) return null;
+    const paper = pn ? [pr / pn, pg / pn, pb / pn] : null;
+    const paperSum = paper ? paper[0] + paper[1] + paper[2] : 0;
+    for (const [a, b] of ring) {
+      const c = rgbAt(a, b);
+      if (bilinear(g, w, h, c[3], c[4]) < ringMin) { dimOut++; continue; }
+      // le papier autour a la même teinte que les cases blanches ; un doigt (peau) est plus coloré
+      if (paper && paperSum > 30) {
+        const sum = c[0] + c[1] + c[2] || 1;
+        let dev = 0;
+        for (let q = 0; q < 3; q++) dev += Math.abs(c[q] / sum - paper[q] / paperSum);
+        if (dev > 0.16) dimOut++;
+      }
+    }
+    if (dimOut > 1) return this._why('marge');
     // les 4 rotations possibles (le coin de départ s devient le haut-gauche)
     const bit = (i, j) => (cells[(i + 1) * 6 + j + 1] > thr ? 1 : 0);
     let best = null;
@@ -266,7 +289,7 @@ export class MarkerTracker {
         if (e === 0) best = { id, s, err: e };
       }
     }
-    if (!best || best.id >= this.ids) return null;
+    if (!best || best.id >= this.ids) return this._why(best ? 'autre id' : 'code');
     return best;
   }
 
@@ -319,19 +342,65 @@ export class MarkerTracker {
   }
 
   // Analyse une image (ImageData). time en secondes.
+  // Pose attendue à l'instant time, en prolongeant le mouvement des deux dernières poses
+  _predict(time) {
+    const p1 = this.prev;
+    if (!p1 || time - p1.time > 0.4) return null;
+    const p0 = this.prev0;
+    const dt = Math.min(0.15, time - p1.time);
+    if (!p0 || p1.time - p0.time <= 1e-3 || p1.time - p0.time > 0.3) return { R: p1.R, t: p1.t };
+    const k = dt / (p1.time - p0.time);
+    const t = p1.t.map((v, i) => v + (v - p0.t[i]) * k);
+    // rotation entre les deux poses, prolongée
+    const D = mulMM(p1.R, transpose(p0.R));
+    const ang = Math.acos(Math.max(-1, Math.min(1, (D[0] + D[4] + D[8] - 1) / 2)));
+    if (ang < 1e-4 || ang > 1.2) return { R: p1.R, t };
+    const ax = [D[7] - D[5], D[2] - D[6], D[3] - D[1]], l = norm(ax);
+    if (l < 1e-9) return { R: p1.R, t };
+    return { R: orthonormalize(mulMM(axisAngle(scale(ax, 1 / l), ang * k), p1.R)), t };
+  }
+
+  // Analyse une image (ImageData). time en secondes.
   process(img, time) {
     const w = img.width, h = img.height;
     const raw = this.detect(img);
+    const K = this._K(w);
+    const pred = this._predict(time);
+    // Marqueurs illisibles (flou) retrouvés là où la pose prédite les attend
+    if (pred && this._unread.length && time - (this.lastRead || -1e9) < 0.6) {
+      const seen = new Set(raw.map((d) => d.id));
+      const free = this._unread.slice();
+      for (const M of MARKERS) {
+        if (seen.has(M.id) || this._facing(pred.R, pred.t, M.id) < 0.12) continue;
+        const proj = this._model(M.id).corners.map((P) => {
+          const X = add(mulMV(pred.R, P), pred.t);
+          return [K.f * X[0] / X[2] + w / 2 - 0.5, K.f * X[1] / X[2] + h / 2 - 0.5];
+        });
+        const pa = polyArea(proj), ps = Math.sqrt(pa);
+        let best = null, bestD = Infinity;
+        for (const q of free) {
+          if (q.area < pa * 0.55 || q.area > pa * 1.8) continue;
+          for (let s = 0; s < 4; s++) {
+            let d = 0;
+            for (let i = 0; i < 4; i++) d += Math.hypot(q.corners[(s + i) % 4][0] - proj[i][0], q.corners[(s + i) % 4][1] - proj[i][1]);
+            d /= 4;
+            if (d < bestD) { bestD = d; best = { q, s }; }
+          }
+        }
+        if (best && bestD < ps * 0.28) {
+          free.splice(free.indexOf(best.q), 1);
+          raw.push({ id: M.id, corners: [0, 1, 2, 3].map((i) => best.q.corners[(best.s + i) % 4]), area: best.q.area, side: Math.sqrt(best.q.area), sharp: best.q.sharp, tracked: true });
+        }
+      }
+    }
     this.last = { dets: raw.map((d) => ({ ...d, face: MARKERS[d.id].face })), ok: false, w, h, markers: true };
     if (!raw.length) return null;
     const dets = raw.map((d) => ({ ...d, corners: d.corners.map(([x, y]) => [x - w / 2 + 0.5, y - h / 2 + 0.5]) }));
-    const K = this._K(w);
     const items = [];
     for (const d of dets) {
       const mod = this._model(d.id);
       for (let i = 0; i < 4; i++) items.push({ P: mod.corners[i], q: d.corners[i] });
     }
-    const prev = this.prev && time - this.prev.time < 0.5 ? this.prev : null;
     const cands = [];
     for (const d of dets) {
       const p = this._poseFromMarker(K, d);
@@ -340,7 +409,7 @@ export class MarkerTracker {
       const f = this._flipped(p.R, p.t, d.id);
       if (f && f.t[2] > 0) cands.push(f);
     }
-    if (prev) cands.push({ R: prev.R, t: prev.t });
+    if (pred) cands.push(pred);
     const side = dets.reduce((s, d) => s + d.side, 0) / dets.length;
     let best = null, bestScore = Infinity;
     for (const c of cands) {
@@ -348,17 +417,35 @@ export class MarkerTracker {
       if (!isFinite(ref.rms) || ref.t[2] <= 0) continue;
       let score = ref.rms / Math.max(1, side * 0.02);
       for (const d of dets) if (this._facing(ref.R, ref.t, d.id) < 0.02) score += 5; // face vue de dos : impossible
-      if (prev) score += 0.6 * rotationAngle(ref.R, prev.R);
+      if (pred) score += 0.6 * rotationAngle(ref.R, pred.R);
       if (score < bestScore) { bestScore = score; best = ref; }
     }
     if (!best) return null;
     // trop d'écart entre le modèle et l'image (mauvaise taille de marqueur, image floue…)
-    if (!(best.rms < Math.max(1.5, side * 0.06))) return null;
+    const allTracked = dets.every((d) => d.tracked);
+    if (!(best.rms < Math.max(1.5, side * (allTracked ? 0.04 : 0.06)))) return null;
+    // sans aucun marqueur lu, on n'accepte pas un saut brusque
+    if (allTracked && pred && rotationAngle(best.R, pred.R) > 0.35) return null;
+    if (!allTracked) this.lastRead = time;
+    if (!this.prev || time - this.prev.time > 1e-4) this.prev0 = this.prev;
     this.prev = { R: best.R, t: best.t, time };
     this.last.ok = true;
     this.last.pose = { R: best.R, t: best.t, K, rms: best.rms, faces: dets.length };
-    return { R: best.R, t: best.t, rms: best.rms, faces: dets.length, ambiguous: false };
+    // confiance : au moins un marqueur net = 1 ; seulement des marqueurs flous = moins sûr
+    const nSharp = dets.filter((d) => d.sharp).length;
+    const quality = nSharp ? 1 : dets.length > 1 ? 0.5 : 0.25;
+    return { R: best.R, t: best.t, rms: best.rms, faces: dets.length, guessed: allTracked, quality };
   }
+}
+
+// Rotation d'angle ang autour de l'axe unitaire k
+function axisAngle(k, ang) {
+  const c = Math.cos(ang), s = Math.sin(ang), v = 1 - c;
+  return [
+    c + k[0] * k[0] * v, k[0] * k[1] * v - k[2] * s, k[0] * k[2] * v + k[1] * s,
+    k[1] * k[0] * v + k[2] * s, c + k[1] * k[1] * v, k[1] * k[2] * v - k[0] * s,
+    k[2] * k[0] * v - k[1] * s, k[2] * k[1] * v + k[0] * s, c + k[2] * k[2] * v,
+  ];
 }
 
 // Dessine un marqueur (pour l'aperçu 3D) : carré blanc de côté px, marqueur de taille ratio
