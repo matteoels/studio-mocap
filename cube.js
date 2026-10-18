@@ -490,52 +490,8 @@ export class CubeTracker {
       for (let i = 0; i < 4; i++) items.push({ P: model[i], q: d.corners[(m.s + m.dir * i + 8) % 4] });
     }
     if (items.length < 4) return { R, t, rms: Infinity, n: 0 };
-    const residuals = (Rc, tc) => {
-      const r = [];
-      for (const it of items) {
-        const X = add(mulMV(Rc, it.P), tc);
-        if (X[2] <= 0.1) { r.push(1e3, 1e3); continue; }
-        const p = this._project(K, X);
-        r.push(p[0] - it.q[0], p[1] - it.q[1]);
-      }
-      return r;
-    };
-    let cur = { R, t };
-    let r = residuals(R, t);
-    for (let iter = 0; iter < 8; iter++) {
-      // poids de Huber (un coin caché par un doigt compte moins)
-      const absr = r.map(Math.abs).sort((a, b) => a - b);
-      const sigma = Math.max(0.6, 1.5 * absr[Math.floor(absr.length / 2)]);
-      const wts = r.map((v) => (Math.abs(v) <= sigma ? 1 : sigma / Math.abs(v)));
-      const J = [];
-      const eps = [1e-4, 1e-4, 1e-4, 1e-3, 1e-3, 1e-3];
-      for (let k = 0; k < 6; k++) {
-        const d = [0, 0, 0, 0, 0, 0]; d[k] = eps[k];
-        const Rk = mulMM(expRot([d[0], d[1], d[2]]), cur.R);
-        const tk = add(cur.t, [d[3], d[4], d[5]]);
-        const rk = residuals(Rk, tk);
-        J.push(rk.map((v, i) => (v - r[i]) / eps[k]));
-      }
-      // (JᵀWJ + μI) δ = -JᵀWr
-      const A = Array.from({ length: 6 }, () => new Array(6).fill(0)), g = new Array(6).fill(0);
-      for (let i = 0; i < r.length; i++) {
-        for (let a = 0; a < 6; a++) {
-          g[a] += J[a][i] * wts[i] * r[i];
-          for (let b = a; b < 6; b++) A[a][b] += J[a][i] * wts[i] * J[b][i];
-        }
-      }
-      for (let a = 0; a < 6; a++) { for (let b = 0; b < a; b++) A[a][b] = A[b][a]; A[a][a] *= 1.001; A[a][a] += 1e-6; }
-      const delta = solve6(A, g.map((v) => -v));
-      if (!delta) break;
-      const Rn = orthonormalize(mulMM(expRot([delta[0], delta[1], delta[2]]), cur.R));
-      const tn = add(cur.t, [delta[3], delta[4], delta[5]]);
-      const rn = residuals(Rn, tn);
-      const cost = (rr) => rr.reduce((s, v, i) => s + wts[i] * v * v, 0);
-      if (cost(rn) < cost(r)) { cur = { R: Rn, t: tn }; r = rn; } else break;
-      if (Math.hypot(...delta) < 1e-6) break;
-    }
-    const rms = Math.sqrt(r.reduce((s, v) => s + v * v, 0) / r.length);
-    return { R: cur.R, t: cur.t, rms, n: items.length / 4 };
+    const res = refinePose(K, R, t, items);
+    return { ...res, n: items.length / 4 };
   }
 
   // Analyse une image (ImageData). time en secondes.
@@ -610,6 +566,57 @@ export function fixAmbiguousFrames(frames) {
     segStart = -1;
   }
   return frames;
+}
+
+// Gauss-Newton robuste (poids de Huber) : ajuste R, t pour que les points 3D P
+// se projettent sur les points image q. items : [{P, q}]
+export function refinePose(K, R, t, items, iters = 8) {
+  const residuals = (Rc, tc) => {
+    const r = [];
+    for (const it of items) {
+      const X = add(mulMV(Rc, it.P), tc);
+      if (X[2] <= 0.1) { r.push(1e3, 1e3); continue; }
+      const p = [K.f * X[0] / X[2] + K.cx, K.f * X[1] / X[2] + K.cy];
+      r.push(p[0] - it.q[0], p[1] - it.q[1]);
+    }
+    return r;
+  };
+  let cur = { R, t };
+  let r = residuals(R, t);
+  for (let iter = 0; iter < iters; iter++) {
+    // poids de Huber (un coin caché par un doigt compte moins)
+    const absr = r.map(Math.abs).sort((a, b) => a - b);
+    const sigma = Math.max(0.6, 1.5 * absr[Math.floor(absr.length / 2)]);
+    const wts = r.map((v) => (Math.abs(v) <= sigma ? 1 : sigma / Math.abs(v)));
+    const J = [];
+    const eps = [1e-4, 1e-4, 1e-4, 1e-3, 1e-3, 1e-3];
+    for (let k = 0; k < 6; k++) {
+      const d = [0, 0, 0, 0, 0, 0]; d[k] = eps[k];
+      const Rk = mulMM(expRot([d[0], d[1], d[2]]), cur.R);
+      const tk = add(cur.t, [d[3], d[4], d[5]]);
+      const rk = residuals(Rk, tk);
+      J.push(rk.map((v, i) => (v - r[i]) / eps[k]));
+    }
+    // (JᵀWJ + μI) δ = -JᵀWr
+    const A = Array.from({ length: 6 }, () => new Array(6).fill(0)), g = new Array(6).fill(0);
+    for (let i = 0; i < r.length; i++) {
+      for (let a = 0; a < 6; a++) {
+        g[a] += J[a][i] * wts[i] * r[i];
+        for (let b = a; b < 6; b++) A[a][b] += J[a][i] * wts[i] * J[b][i];
+      }
+    }
+    for (let a = 0; a < 6; a++) { for (let b = 0; b < a; b++) A[a][b] = A[b][a]; A[a][a] *= 1.001; A[a][a] += 1e-6; }
+    const delta = solve6(A, g.map((v) => -v));
+    if (!delta) break;
+    const Rn = orthonormalize(mulMM(expRot([delta[0], delta[1], delta[2]]), cur.R));
+    const tn = add(cur.t, [delta[3], delta[4], delta[5]]);
+    const rn = residuals(Rn, tn);
+    const cost = (rr) => rr.reduce((s, v, i) => s + wts[i] * v * v, 0);
+    if (cost(rn) < cost(r)) { cur = { R: Rn, t: tn }; r = rn; } else break;
+    if (Math.hypot(...delta) < 1e-6) break;
+  }
+  const rms = Math.sqrt(r.reduce((s, v) => s + v * v, 0) / r.length);
+  return { R: cur.R, t: cur.t, rms };
 }
 
 function solve6(A, b) {
@@ -724,3 +731,6 @@ export function quatToMat([x, y, z, w]) {
     2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
   ];
 }
+
+// Outils partagés avec le suivi par marqueurs (marqueurs.js)
+export const geom = { dot, cross, norm, scale, add, sub, mulMV, mulMM, transpose, fromCols, orthonormalize, homography, convexHull, polyArea, bestQuad, refineQuad };
