@@ -80,6 +80,13 @@
   .face .sw{width:22px;height:22px;border-radius:5px;border:1px solid var(--line-2);background:repeating-linear-gradient(45deg,#1d2431 0 4px,#283142 4px 8px)}
   .face.picking{color:var(--trim)} .face.picking .sw{outline:2px solid var(--trim);outline-offset:1px}
   .face .btn{padding:4px 9px;font-size:12px}
+  .markers{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .mk{min-width:0;display:grid;grid-template-columns:22px minmax(0,1fr);gap:6px;align-items:center;font-size:12px;padding:5px 6px;border-radius:8px;border:1px solid var(--line);background:var(--ground)}
+  .mk canvas{width:22px;height:22px;border-radius:3px;display:block}
+  .mk b{font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mk span{color:var(--muted);font:11px var(--mono)}
+  .mk.seen{border-color:var(--ok)} .mk.seen span{color:var(--ok)}
+  .hint a{color:inherit;text-decoration:underline}
   .pips.big{width:min(62%,640px)}
   .pip.picking{cursor:crosshair;border-color:var(--trim)}
   input[type=number]{width:70px;background:var(--panel-2);border:1px solid var(--line-2);border-radius:6px;padding:4px 6px}
@@ -167,14 +174,25 @@
       </section>
 
       <section class="sec" id="cubeSec" hidden>
-        <h2>Cube coloré</h2>
-        <p class="hint">Peins chaque face d'un cube (un carton) d'une couleur franche et différente. Évite les couleurs « entre deux » : pas d'orange si tu as du rouge et du jaune. Le plus fiable : planter un crayon dans la face du dessous pour le tenir sans cacher les faces.</p>
-        <div class="faces" id="faceList"></div>
-        <div class="row"><button class="btn grow" id="calibAllBtn" disabled>Calibrer les couleurs</button></div>
+        <h2>Cube</h2>
+        <div class="seg" role="group" aria-label="Type de cube">
+          <button class="segbtn on" id="kindMarkers" type="button" aria-pressed="true">Marqueurs imprimés</button>
+          <button class="segbtn" id="kindColors" type="button" aria-pressed="false">Faces colorées</button>
+        </div>
+        <div class="markerOnly">
+          <p class="hint">Imprime les 6 marqueurs (<a href="marqueurs/marqueurs_cube_10cm.pdf" target="_blank" rel="noopener">PDF, 2 pages A4</a>) à 100 %, découpe-les et colle-les sur un cube de 10 cm, chaque petite flèche ↑ vers la face indiquée. Rien à calibrer : une seule face visible suffit pour la position et la rotation.</p>
+          <div class="markers" id="markerList"></div>
+          <label class="opt">Côté du carré noir (cm) <input type="number" id="markerSize" min="1" max="70" step="0.1" value="8"></label>
+        </div>
+        <div class="colorOnly" hidden>
+          <p class="hint">Peins chaque face d'un cube (un carton) d'une couleur franche et différente. Évite les couleurs « entre deux » : pas d'orange si tu as du rouge et du jaune. Le plus fiable : planter un crayon dans la face du dessous pour le tenir sans cacher les faces.</p>
+          <div class="faces" id="faceList"></div>
+          <div class="row"><button class="btn grow" id="calibAllBtn" disabled>Calibrer les couleurs</button></div>
+        </div>
         <p class="calib warn" id="cubeInfo">Démarre la caméra, puis calibre les couleurs.</p>
         <label class="opt">Taille du cube (cm) <input type="number" id="cubeSize" min="2" max="80" step="0.5" value="10"></label>
         <label class="opt">Champ de vision de la webcam <span><input type="range" id="camFov" min="40" max="100" step="1" value="60"> <span id="camFovVal" class="hint">60°</span></span></label>
-        <label class="opt">Tolérance des couleurs <input type="range" id="colorTol" min="10" max="60" step="1" value="28"></label>
+        <label class="opt colorOnly" hidden>Tolérance des couleurs <input type="range" id="colorTol" min="10" max="60" step="1" value="28"></label>
       </section>
 
       <section class="sec">
@@ -289,6 +307,7 @@
 
 <script type="module">
 import * as THREE from 'three';
+import { MarkerTracker, MARKERS, drawMarker } from './marqueurs.js';
 import { CubeTracker, FACES, sampleColor, cameraPoseToWorld, encodeForGDevelop, fixAmbiguousFrames, removeSpikes, matToQuat, quatToMat, slerp as slerpQ, rotationAngle } from './cube.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -1137,7 +1156,7 @@ function fmt(t) {
 }
 
 function startRecording() {
-  if (trackMode === 'object') { if (sourceOn && cubeTracker.isCalibrated()) startObjectRecording(); return; }
+  if (trackMode === 'object') { if (sourceOn && tracker().isCalibrated()) startObjectRecording(); return; }
   if (!rig || !sourceOn) return;
   take = { bones: rig.drive.slice(), frames: [], motion: [], inT: 0, outT: 0 };
   recording = true; recStart = performance.now(); mode = 'live'; playing = false;
@@ -1319,8 +1338,12 @@ $('exportBtn').addEventListener('click', () => {
 /* ---------------- Mode objet : cube coloré tenu en main ---------------- */
 let trackMode = 'body';            // body | object
 const cubeTracker = new CubeTracker();
+const markerTracker = new MarkerTracker();
+let cubeKind = 'markers';          // markers (ArUco imprimés) | colors (faces colorées)
+const tracker = () => (cubeKind === 'markers' ? markerTracker : cubeTracker);
 let picking = -1, pickQueue = [];
-const PROC_W = 320;                // largeur de l'image analysée
+const PROC_W = 320;                // largeur de l'image analysée (couleurs)
+const PROC_W_MARKERS = 800;        // les marqueurs ont besoin de plus de détails
 const procCanvas = document.createElement('canvas');
 const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
 const pickCanvas = document.createElement('canvas');
@@ -1339,6 +1362,48 @@ cubeMesh.castShadow = true;
 cubeMesh.scale.setScalar(0.42);
 cubeMesh.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x10141b })));
 cubeView.add(cubeMesh);
+const markerTex = MARKERS.map(m => {
+  const c = document.createElement('canvas'); c.width = c.height = 120;
+  drawMarker(c.getContext('2d'), m.id, 120, 0.8);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  return t;
+});
+function paintCube() {
+  FACES.forEach((F, i) => {
+    const m = cubeMats[i];
+    if (cubeKind === 'markers') { m.map = markerTex[MARKERS.findIndex(k => k.face === i)]; m.color.set(0xffffff); }
+    else {
+      const c = cubeTracker.colors[i];
+      m.map = null;
+      m.color.setRGB(c ? c[0] / 255 : 0.23, c ? c[1] / 255 : 0.27, c ? c[2] / 255 : 0.34, THREE.SRGBColorSpace);
+    }
+    m.needsUpdate = true;
+  });
+}
+// Liste des 6 marqueurs (s'allument quand ils sont vus)
+let seenKey = '';
+function renderMarkers() {
+  const list = $('markerList');
+  list.innerHTML = '';
+  MARKERS.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'mk'; row.id = 'mk' + m.id;
+    row.title = `Face ${m.name} : flèche ↑ vers ${m.upName}`;
+    const c = document.createElement('canvas'); c.width = c.height = 52;
+    drawMarker(c.getContext('2d'), m.id, 52, 0.8);
+    const txt = document.createElement('div');
+    txt.innerHTML = `<b>${m.name}</b><span>ID ${m.id}</span>`;
+    row.append(c, txt);
+    list.append(row);
+  });
+  seenKey = '';
+}
+function showSeen(ids) {
+  const key = ids.slice().sort().join(',');
+  if (key === seenKey) return;
+  seenKey = key;
+  MARKERS.forEach(m => $('mk' + m.id).classList.toggle('seen', ids.includes(m.id)));
+}
 const CUBE_HOME = new THREE.Vector3(0, 1.0, 0);
 const MOVE_SCALE = 0.02;           // mètres de l'aperçu par cm réel
 // Monde de l'export (X droite, Y s'éloigne de la webcam, Z haut) -> scène de l'aperçu (Y haut)
@@ -1380,10 +1445,12 @@ function renderFaces() {
     b.addEventListener('click', () => { pickQueue = []; startPick(i); });
     row.append(sw, name, b);
     list.append(row);
-    cubeMats[i].color.setRGB(c ? c[0] / 255 : 0.23, c ? c[1] / 255 : 0.27, c ? c[2] / 255 : 0.34, THREE.SRGBColorSpace);
   });
+  paintCube();
   const n = cubeTracker.colors.filter(Boolean).length;
-  if (picking < 0) {
+  if (cubeKind === 'markers') {
+    if (!sourceOn) { const info = $('cubeInfo'); info.className = 'calib warn'; info.textContent = 'Démarre la caméra, puis montre le cube.'; }
+  } else if (picking < 0) {
     const info = $('cubeInfo');
     if (!sourceOn) { info.className = 'calib warn'; info.textContent = n ? `${n}/6 couleurs enregistrées. Démarre la caméra.` : 'Démarre la caméra, puis calibre les couleurs.'; }
     else if (n < 6) { info.className = 'calib warn'; info.textContent = `${n}/6 couleurs. Calibre les faces manquantes (au moins 2 pour commencer).`; }
@@ -1391,7 +1458,7 @@ function renderFaces() {
 }
 function saveCube() {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify({ colors: cubeTracker.colors, size: cubeTracker.size, fov: cubeTracker.fov, tol: cubeTracker.tolerance }));
+    localStorage.setItem(STORE_KEY, JSON.stringify({ colors: cubeTracker.colors, size: cubeTracker.size, fov: cubeTracker.fov, tol: cubeTracker.tolerance, kind: cubeKind, marker: markerTracker.markerSize }));
   } catch (e) { /* stockage indisponible */ }
 }
 function loadCube() {
@@ -1399,9 +1466,11 @@ function loadCube() {
     const d = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
     if (!d) return;
     (d.colors || []).forEach((c, i) => cubeTracker.setColor(i, c));
-    if (d.size) { cubeTracker.size = d.size; $('cubeSize').value = d.size; }
-    if (d.fov) { cubeTracker.fov = d.fov; $('camFov').value = d.fov; $('camFovVal').textContent = d.fov + '°'; }
+    if (d.size) { cubeTracker.size = markerTracker.size = d.size; $('cubeSize').value = d.size; }
+    if (d.fov) { cubeTracker.fov = markerTracker.fov = d.fov; $('camFov').value = d.fov; $('camFovVal').textContent = d.fov + '°'; }
     if (d.tol) { cubeTracker.tolerance = d.tol; $('colorTol').value = d.tol; }
+    if (d.marker) { markerTracker.markerSize = d.marker; $('markerSize').value = d.marker; }
+    if (d.kind === 'colors') cubeKind = 'colors';
   } catch (e) { /* données illisibles */ }
 }
 function startPick(i) {
@@ -1450,8 +1519,37 @@ $('pip').addEventListener('click', e => {
   }
 });
 document.addEventListener('keydown', e => { if (e.code === 'Escape' && picking >= 0) { endPick(); setStatus('Calibration annulée.'); } });
-$('cubeSize').addEventListener('change', e => { const v = parseFloat(e.target.value); if (v > 0) { cubeTracker.size = v; cubeTracker.reset(); saveCube(); } });
-$('camFov').addEventListener('input', e => { cubeTracker.fov = parseFloat(e.target.value); $('camFovVal').textContent = e.target.value + '°'; cubeTracker.reset(); saveCube(); });
+$('cubeSize').addEventListener('change', e => { const v = parseFloat(e.target.value); if (v > 0) { cubeTracker.size = markerTracker.size = v; cubeTracker.reset(); markerTracker.reset(); saveCube(); } });
+$('markerSize').addEventListener('change', e => { const v = parseFloat(e.target.value); if (v > 0) { markerTracker.markerSize = v; markerTracker.reset(); saveCube(); } });
+$('camFov').addEventListener('input', e => { cubeTracker.fov = markerTracker.fov = parseFloat(e.target.value); $('camFovVal').textContent = e.target.value + '°'; cubeTracker.reset(); markerTracker.reset(); saveCube(); });
+
+// ---- Type de cube : marqueurs imprimés ou faces colorées ----
+function objectHints() {
+  $('modeHint').textContent = cubeKind === 'markers'
+    ? 'Un cube avec 6 marqueurs imprimés, tenu en main, anime un objet 3D ou la caméra dans GDevelop (export en texte).'
+    : 'Un cube aux faces colorées, tenu en main, anime un objet 3D ou la caméra dans GDevelop (export en texte).';
+  $('sourceHint').textContent = cubeKind === 'markers'
+    ? 'Tiens le cube à 30–80 cm de la webcam, dans une pièce bien éclairée. Garde les doigts sur les arêtes, pas sur les carrés noirs.'
+    : 'Tiens le cube à 30–80 cm de la webcam, dans une pièce bien éclairée, devant un fond qui n\'a pas les couleurs du cube.';
+}
+function setCubeKind(k) {
+  if (k === cubeKind) return;
+  if (recording) stopRecording();
+  if (picking >= 0) endPick();
+  cubeKind = k;
+  $('kindMarkers').classList.toggle('on', k === 'markers'); $('kindMarkers').setAttribute('aria-pressed', k === 'markers');
+  $('kindColors').classList.toggle('on', k === 'colors'); $('kindColors').setAttribute('aria-pressed', k === 'colors');
+  document.querySelectorAll('.markerOnly').forEach(el => el.hidden = k !== 'markers');
+  document.querySelectorAll('.colorOnly').forEach(el => el.hidden = k !== 'colors');
+  cubeTracker.reset(); markerTracker.reset(); cubeTracker.last = markerTracker.last = null; lastCube = null;
+  if (trackMode === 'object') { objectHints(); clearTake(); }
+  const ov = $('overlay'); ov.getContext('2d').clearRect(0, 0, ov.width, ov.height);
+  saveCube();
+  renderFaces();
+  updateUI();
+}
+$('kindMarkers').addEventListener('click', () => setCubeKind('markers'));
+$('kindColors').addEventListener('click', () => setCubeKind('colors'));
 $('colorTol').addEventListener('input', e => { cubeTracker.tolerance = parseFloat(e.target.value); saveCube(); });
 
 // ---- Choix du mode ----
@@ -1463,12 +1561,11 @@ function setTrackMode(m) {
   $('modeObject').classList.toggle('on', m === 'object'); $('modeObject').setAttribute('aria-pressed', m === 'object');
   document.querySelectorAll('.bodyOnly').forEach(el => el.hidden = m === 'object');
   $('cubeSec').hidden = m !== 'object';
-  $('modeHint').textContent = m === 'object'
-    ? 'Un cube aux faces colorées, tenu en main, anime un objet 3D ou la caméra dans GDevelop (export en texte).'
-    : 'Ton corps anime un modèle 3D riggé, exporté en .glb.';
-  $('sourceHint').textContent = m === 'object'
-    ? 'Tiens le cube à 30–80 cm de la webcam, dans une pièce bien éclairée, devant un fond qui n\'a pas les couleurs du cube.'
-    : 'Recule pour que ton corps entier soit visible. Le suivi fonctionne aussi avec le haut du corps seulement.';
+  if (m === 'object') objectHints();
+  else {
+    $('modeHint').textContent = 'Ton corps anime un modèle 3D riggé, exporté en .glb.';
+    $('sourceHint').textContent = 'Recule pour que ton corps entier soit visible. Le suivi fonctionne aussi avec le haut du corps seulement.';
+  }
   if (rig) rig.obj.visible = m === 'body';
   if (skelHelper) skelHelper.visible = m === 'body' && $('showSkel').checked;
   cubeView.visible = m === 'object';
@@ -1487,13 +1584,14 @@ $('modeObject').addEventListener('click', () => setTrackMode('object'));
 function trackCube(now) {
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return;
-  const w = PROC_W, h = Math.round(PROC_W * vh / vw);
+  const w = cubeKind === 'markers' ? Math.min(vw, PROC_W_MARKERS) : PROC_W, h = Math.round(w * vh / vw);
   if (procCanvas.width !== w || procCanvas.height !== h) { procCanvas.width = w; procCanvas.height = h; }
   procCtx.drawImage(video, 0, 0, w, h);
-  if (picking >= 0 || !cubeTracker.isCalibrated()) { drawCubeOverlay(null); return; }
+  if (picking >= 0 || !tracker().isCalibrated()) { drawCubeOverlay(null); return; }
   const img = procCtx.getImageData(0, 0, w, h);
   let res = null;
-  try { res = cubeTracker.process(img, now / 1000); } catch (e) { console.warn(e); }
+  try { res = tracker().process(img, now / 1000); } catch (e) { console.warn(e); }
+  if (cubeKind === 'markers') showSeen(markerTracker.last ? markerTracker.last.dets.map(d => d.id) : []);
   lastCube = res;
   if (recording && take && take.kind === 'object') {
     take.raw.push(res ? { time: (now - recStart) / 1000, ok: true, R: res.R, pos: res.t, ambiguous: res.ambiguous }
@@ -1503,10 +1601,15 @@ function trackCube(now) {
   const info = $('cubeInfo');
   if (res) {
     info.className = 'calib';
-    info.textContent = `Cube suivi · ${res.faces} face${res.faces > 1 ? 's' : ''} · à ${Math.round(res.t[2])} cm`;
+    info.textContent = cubeKind === 'markers'
+      ? `Cube suivi · ${res.faces} marqueur${res.faces > 1 ? 's' : ''} · à ${Math.round(res.t[2])} cm`
+      : `Cube suivi · ${res.faces} face${res.faces > 1 ? 's' : ''} · à ${Math.round(res.t[2])} cm`;
   } else {
     info.className = 'calib warn';
-    info.textContent = cubeTracker.last && cubeTracker.last.dets.length ? 'Cube mal vu : montre-le mieux (deux ou trois faces).' : 'Cube introuvable : vérifie l\'éclairage et la calibration.';
+    const last = tracker().last;
+    info.textContent = cubeKind === 'markers'
+      ? (last && last.dets.length ? 'Marqueur mal vu : vérifie la taille du carré noir.' : 'Aucun marqueur vu : rapproche le cube, éclaire-le, ne cache pas les carrés noirs.')
+      : (last && last.dets.length ? 'Cube mal vu : montre-le mieux (deux ou trois faces).' : 'Cube introuvable : vérifie l\'éclairage et la calibration.');
   }
   if (res && mode === 'live') {
     const wpose = cameraPoseToWorld(res.R, res.t, $('mirror').checked);
@@ -1525,12 +1628,12 @@ function trackCube(now) {
 function drawCubeOverlay(res) {
   const c = $('overlay'), g = c.getContext('2d');
   g.clearRect(0, 0, c.width, c.height);
-  const last = cubeTracker.last;
+  const last = tracker().last;
   if (!last || picking >= 0) return;
   const k = c.width / last.w;
   g.lineWidth = Math.max(2, c.width / 300);
   for (const d of last.dets) {
-    const col = cubeTracker.colors[d.face];
+    const col = last.markers ? [79, 209, 161] : cubeTracker.colors[d.face];
     g.strokeStyle = col ? `rgb(${col[0]},${col[1]},${col[2]})` : '#fff';
     const poly = d.corners || d.hull;
     if (!poly || poly.length < 3) continue;
@@ -1544,10 +1647,24 @@ function drawCubeOverlay(res) {
     poly.forEach(([x, y], i) => (i ? g.lineTo(x * k, y * k) : g.moveTo(x * k, y * k)));
     g.closePath(); g.stroke();
     g.lineWidth = Math.max(2, c.width / 300);
+    if (last.markers) {
+      // coin haut-gauche du marqueur et son numéro
+      const [x0, y0] = poly[0];
+      g.fillStyle = '#4fd1a1';
+      g.beginPath(); g.arc(x0 * k, y0 * k, Math.max(3, c.width / 220), 0, Math.PI * 2); g.fill();
+      const mx = poly.reduce((a, p) => a + p[0], 0) / 4 * k, my = poly.reduce((a, p) => a + p[1], 0) / 4 * k;
+      // l'aperçu vidéo est affiché en miroir : le texte est retourné pour rester lisible
+      g.save(); g.translate(mx, my); if ($('mirror').checked) g.scale(-1, 1);
+      g.font = `600 ${Math.max(12, Math.round(c.width / 50))}px ui-monospace, monospace`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.lineWidth = 4; g.strokeStyle = 'rgba(16,20,27,.85)'; g.strokeText('ID ' + d.id, 0, 0);
+      g.fillStyle = '#4fd1a1'; g.fillText('ID ' + d.id, 0, 0);
+      g.restore();
+      g.lineWidth = Math.max(2, c.width / 300);
+    }
   }
   if (res && last.pose) {
     // axes du cube
-    const { R, t, K } = last.pose, L = cubeTracker.size * 0.8;
+    const { R, t, K } = last.pose, L = tracker().size * 0.8;
     const proj = P => [(K.f * P[0] / P[2] + last.w / 2) * k, (K.f * P[1] / P[2] + last.h / 2) * k];
     const o = proj(t);
     [[1, 0, 0, '#ff5a5a'], [0, 1, 0, '#4fd1a1'], [0, 0, 1, '#86a8ff']].forEach(([x, y, z, col]) => {
@@ -1598,7 +1715,7 @@ function finishObjectTake() {
     q = q ? slerpQ(q, qn, Math.max(0.1, 1 - sm)) : qn;
     return { t: r.time - seg[0].time, R: quatToMat(q), p };
   });
-  const motion = frames.map((f, i) => i ? rotationAngle(f.R, frames[i - 1].R) + Math.hypot(f.p[0] - frames[i - 1].p[0], f.p[1] - frames[i - 1].p[1], f.p[2] - frames[i - 1].p[2]) / cubeTracker.size : 0);
+  const motion = frames.map((f, i) => i ? rotationAngle(f.R, frames[i - 1].R) + Math.hypot(f.p[0] - frames[i - 1].p[0], f.p[1] - frames[i - 1].p[1], f.p[2] - frames[i - 1].p[2]) / tracker().size : 0);
   take.frames = frames;
   take.motion = motion;
   take.mirror = mirror;
@@ -1639,6 +1756,8 @@ $('txtBtn').addEventListener('click', () => {
 $('closeDlg').addEventListener('click', () => $('exportDlg').close());
 
 loadCube();
+renderMarkers();
+if (cubeKind === 'colors') { cubeKind = 'markers'; setCubeKind('colors'); }
 renderFaces();
 try { if (localStorage.getItem(STORE_KEY + '-mode') === 'object') setTimeout(() => setTrackMode('object'), 0); } catch (e) { /* rien */ }
 
@@ -1650,12 +1769,13 @@ function updateUI() {
   badge.textContent = recording ? 'Enregistrement' : mode === 'review' ? 'Relecture' : sourceOn ? 'Direct' : 'Repos';
   $('rectime').hidden = !recording;
   const rb = $('recBtn'); rb.classList.toggle('on', recording);
-  rb.disabled = trackMode === 'object' ? !(sourceOn && cubeTracker.isCalibrated() && picking < 0) : !(sourceOn && rig);
+  rb.disabled = trackMode === 'object' ? !(sourceOn && tracker().isCalibrated() && picking < 0) : !(sourceOn && rig);
   rb.title = recording ? 'Arrêter (R)' : 'Enregistrer (R)';
   const has = !!take && !recording;
   $('tlhead').hidden = !has; tl.hidden = !has; $('tlEmpty').hidden = has;
   $('tlEmpty').textContent = recording ? 'Enregistrement… appuie à nouveau sur le bouton rouge pour arrêter.'
-    : trackMode === 'object' && !cubeTracker.isCalibrated() ? 'Démarre la caméra et calibre les couleurs du cube, puis appuie sur le bouton rouge.'
+    : trackMode === 'object' && !tracker().isCalibrated() ? 'Démarre la caméra et calibre les couleurs du cube, puis appuie sur le bouton rouge.'
+    : trackMode === 'object' && cubeKind === 'markers' && !sourceOn ? 'Démarre la caméra, montre le cube à marqueurs, puis appuie sur le bouton rouge.'
     : 'Démarre la caméra puis appuie sur le bouton rouge pour enregistrer une prise.';
   $('exportBtn').textContent = take && take.kind === 'object' ? 'Exporter pour GDevelop' : 'Exporter .glb';
   $('calibAllBtn').disabled = !sourceOn;
