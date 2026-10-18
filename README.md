@@ -36,7 +36,7 @@ Le suivi tient avec une lumière chaude (lampe d'intérieur) et un peu de flou d
 
 Importe [`gdevelop/MocapPlayer.json`](gdevelop/MocapPlayer.json) (Gestionnaire de projet → Extensions → Importer), colle le texte exporté dans une variable texte ou un objet Texte, puis :
 
-- **Objet 3D** : comportement « Animation enregistrée », action *Jouer l'animation* (texte, boucle, vitesse, échelle en px/cm, déplacements, rotations, relatif à l'angle de départ, aller-retour).
+- **Objet 3D** : comportement « Animation enregistrée », action *Jouer l'animation* (texte, boucle, vitesse, échelle en px/cm, déplacements, rotations, relatif à l'angle de départ, aller-retour). En relatif, le mouvement tourne avec l'objet : « loin de la webcam » = devant l'objet (angle 0 = vers +X), et les rotations se font autour de ses propres axes.
 - **Caméra** : action *Jouer l'animation sur la caméra* (même réglages + calque).
 - **Aller-retour** : à la fin, l'animation se rejoue à l'envers, donc l'objet ou la caméra revient exactement à son point de départ ; avec la boucle, ça se répète sans à-coup.
 
