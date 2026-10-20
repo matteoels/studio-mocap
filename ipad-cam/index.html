@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>iPad Cam → OBS</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  :root { --bg:#0f1115; --card:#1a1d24; --txt:#e8eaf0; --mut:#8a90a0; --acc:#4f8cff; --ok:#2ecc71; --err:#ff5c5c; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; font-family:-apple-system,system-ui,sans-serif; }
+  body.sender { background:var(--bg); color:var(--txt); }
+  body.viewer { background:transparent; overflow:hidden; }
+
+  /* ---------- Émetteur (iPad) ---------- */
+  .wrap { max-width:720px; margin:0 auto; padding:max(16px,env(safe-area-inset-top)) 16px 32px; }
+  h1 { font-size:22px; margin:8px 0 16px; }
+  .card { background:var(--card); border-radius:14px; padding:16px; margin-bottom:14px; }
+  label { display:block; font-size:13px; color:var(--mut); margin:10px 0 6px; }
+  select,input[type=text] { width:100%; padding:12px; border-radius:10px; border:1px solid #2c313c; background:#11141a; color:var(--txt); font-size:16px; }
+  .row { display:flex; gap:10px; }
+  .row > * { flex:1; }
+  .chk { display:flex; align-items:center; gap:10px; margin-top:12px; font-size:15px; }
+  .chk input { width:22px; height:22px; }
+  button { width:100%; padding:14px; border:0; border-radius:10px; background:var(--acc); color:#fff; font-size:17px; font-weight:600; margin-top:14px; }
+  button.sec { background:#2c313c; font-size:15px; font-weight:500; }
+  button.stop { background:var(--err); }
+  #preview { width:100%; border-radius:12px; background:#000; aspect-ratio:16/9; object-fit:contain; display:block; }
+  .status { font-size:14px; color:var(--mut); margin-top:10px; }
+  .status b { color:var(--txt); }
+  .dot { display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--mut); margin-right:6px; }
+  .dot.on { background:var(--ok); } .dot.err { background:var(--err); }
+  .hidden { display:none !important; }
+  #dim { position:fixed; inset:0; background:#000; z-index:10; display:flex; align-items:center; justify-content:center; color:#333; font-size:14px; }
+
+  /* ---------- Récepteur (OBS) ---------- */
+  #view { position:fixed; inset:0; width:100vw; height:100vh; object-fit:contain; background:transparent; }
+  #view.cover { object-fit:cover; }
+  #vstatus { position:fixed; left:12px; bottom:12px; font:14px system-ui; color:#fff; background:rgba(0,0,0,.6); padding:6px 10px; border-radius:8px; }
+</style>
+</head>
+<body>
+
+<!-- ===== UI émetteur ===== -->
+<div id="senderUI" class="wrap hidden">
+  <h1>📷 iPad Cam → OBS</h1>
+
+  <div class="card">
+    <video id="preview" autoplay playsinline muted></video>
+    <div class="status"><span id="sdot" class="dot"></span><span id="stext">Caméra arrêtée</span></div>
+    <div class="status">Spectateurs connectés : <b id="nviewers">0</b></div>
+  </div>
+
+  <div class="card">
+    <label>Caméra</label>
+    <select id="camSel"><option value="">(autoriser la caméra d'abord)</option></select>
+    <div class="row">
+      <div>
+        <label>Résolution</label>
+        <select id="resSel">
+          <option value="1280x720">720p</option>
+          <option value="1920x1080" selected>1080p</option>
+          <option value="3840x2160">4K</option>
+        </select>
+      </div>
+      <div>
+        <label>Images/s</label>
+        <select id="fpsSel">
+          <option value="30" selected>30</option>
+          <option value="60">60</option>
+        </select>
+      </div>
+    </div>
+    <div class="chk"><input type="checkbox" id="audioChk"><span>Envoyer aussi le micro</span></div>
+    <button id="startBtn">Démarrer la caméra</button>
+    <button id="stopBtn" class="stop hidden">Arrêter</button>
+  </div>
+
+  <div class="card">
+    <label>Lien à mettre dans OBS (Source → Navigateur)</label>
+    <input type="text" id="linkBox" readonly>
+    <button id="copyBtn">Copier le lien</button>
+    <button id="newIdBtn" class="sec">Générer un nouveau lien</button>
+    <button id="dimBtn" class="sec">Écran noir (économie batterie)</button>
+  </div>
+</div>
+<div id="dim" class="hidden">Touchez pour réafficher</div>
+
+<!-- ===== UI récepteur ===== -->
+<video id="view" class="hidden" autoplay playsinline muted></video>
+<div id="vstatus" class="hidden">Connexion…</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+const viewId = params.get('view');
+
+if (viewId) startViewer(viewId); else startSender();
+
+/* =====================================================
+   ÉMETTEUR (iPad)
+   ===================================================== */
+function startSender() {
+  document.body.classList.add('sender');
+  $('senderUI').classList.remove('hidden');
+
+  let stream = null, peer = null, wakeLock = null;
+  const viewers = new Map(); // peerId -> {conn, call}
+
+  let myId = null;
+  try { myId = localStorage.getItem('ipadcam-id'); } catch(e) {}
+  if (!myId) myId = newId();
+
+  function newId() {
+    const id = 'ipadcam-' + Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+    try { localStorage.setItem('ipadcam-id', id); } catch(e) {}
+    return id;
+  }
+  function viewLink() {
+    return location.origin + location.pathname + '?view=' + myId;
+  }
+  function setStatus(txt, state) {
+    $('stext').textContent = txt;
+    $('sdot').className = 'dot' + (state ? ' ' + state : '');
+  }
+  function updateCount() { $('nviewers').textContent = [...viewers.values()].filter(v => v.call).length; }
+
+  /* --- Signalisation --- */
+  function connectPeer() {
+    if (peer) peer.destroy();
+    $('linkBox').value = viewLink();
+    peer = new Peer(myId);
+    peer.on('open', () => setStatus(stream ? 'En direct' : 'Prêt — démarre la caméra', stream ? 'on' : ''));
+    peer.on('connection', conn => {
+      conn.on('open', () => {
+        viewers.set(conn.peer, { conn, call: null });
+        if (stream) callViewer(conn.peer);
+      });
+      conn.on('close', () => dropViewer(conn.peer));
+      conn.on('error', () => dropViewer(conn.peer));
+    });
+    peer.on('disconnected', () => { setTimeout(() => { if (peer && !peer.destroyed) peer.reconnect(); }, 2000); });
+    peer.on('error', err => {
+      if (err.type === 'unavailable-id') {
+        setStatus('ID encore occupé, nouvel essai…', 'err');
+        setTimeout(connectPeer, 4000);
+      } else if (['network','server-error','socket-error','socket-closed'].includes(err.type)) {
+        setStatus('Réseau perdu, reconnexion…', 'err');
+        setTimeout(connectPeer, 3000);
+      }
+    });
+  }
+
+  function callViewer(pid) {
+    const v = viewers.get(pid);
+    if (!v || !stream) return;
+    if (v.call) v.call.close();
+    const call = peer.call(pid, stream);
+    v.call = call;
+    call.on('close', () => { if (viewers.get(pid)?.call === call) { viewers.get(pid).call = null; updateCount(); } });
+    // Débit élevé pour une bonne qualité dans OBS
+    const pc = call.peerConnection;
+    pc.addEventListener('connectionstatechange', () => {
+      if (pc.connectionState === 'connected') boostBitrate(pc);
+    });
+    updateCount();
+  }
+  function dropViewer(pid) {
+    const v = viewers.get(pid);
+    if (v?.call) v.call.close();
+    viewers.delete(pid);
+    updateCount();
+  }
+  async function boostBitrate(pc) {
+    for (const s of pc.getSenders()) {
+      if (s.track?.kind !== 'video') continue;
+      const p = s.getParameters();
+      if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+      p.encodings[0].maxBitrate = 12_000_000;
+      try { await s.setParameters(p); } catch(e) {}
+    }
+  }
+
+  /* --- Caméra --- */
+  async function listCams() {
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    const sel = $('camSel'), prev = sel.value;
+    sel.innerHTML = '';
+    devs.forEach((d, i) => {
+      const o = document.createElement('option');
+      o.value = d.deviceId;
+      o.textContent = d.label || ('Caméra ' + (i + 1));
+      sel.appendChild(o);
+    });
+    if (prev && devs.some(d => d.deviceId === prev)) sel.value = prev;
+  }
+
+  function constraints() {
+    const [w, h] = $('resSel').value.split('x').map(Number);
+    const fps = Number($('fpsSel').value);
+    const video = { width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: fps } };
+    if ($('camSel').value) video.deviceId = { exact: $('camSel').value };
+    else video.facingMode = 'environment';
+    return { video, audio: $('audioChk').checked ? { echoCancellation: false, noiseSuppression: false, autoGainControl: false } : false };
+  }
+
+  async function startCam() {
+    try {
+      const fresh = await navigator.mediaDevices.getUserMedia(constraints());
+      const old = stream;
+      stream = fresh;
+      $('preview').srcObject = stream;
+      await listCams();
+      // Remplacer les pistes à chaud pour les spectateurs déjà connectés
+      let needRecall = false;
+      for (const [pid, v] of viewers) {
+        if (!v.call) { callViewer(pid); continue; }
+        const senders = v.call.peerConnection.getSenders();
+        for (const track of stream.getTracks()) {
+          const s = senders.find(x => x.track && x.track.kind === track.kind);
+          if (s) await s.replaceTrack(track); else needRecall = true;
+        }
+        if (needRecall) callViewer(pid);
+      }
+      if (old) old.getTracks().forEach(t => t.stop());
+      const vt = stream.getVideoTracks()[0].getSettings();
+      setStatus(`En direct — ${vt.width}×${vt.height} @ ${Math.round(vt.frameRate || 0)} i/s`, 'on');
+      $('startBtn').textContent = 'Appliquer les réglages';
+      $('stopBtn').classList.remove('hidden');
+      keepAwake();
+    } catch (e) {
+      setStatus('Erreur caméra : ' + e.message, 'err');
+    }
+  }
+
+  function stopCam() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null;
+    $('preview').srcObject = null;
+    for (const v of viewers.values()) { if (v.call) v.call.close(); v.call = null; }
+    updateCount();
+    setStatus('Caméra arrêtée', '');
+    $('startBtn').textContent = 'Démarrer la caméra';
+    $('stopBtn').classList.add('hidden');
+    if (wakeLock) { wakeLock.release().catch(()=>{}); wakeLock = null; }
+  }
+
+  /* --- Garder l'écran allumé --- */
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator && !wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } } catch(e) {}
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && stream) {
+      keepAwake();
+      // iOS peut couper la caméra en arrière-plan : on la relance si besoin
+      if (stream.getVideoTracks().some(t => t.readyState === 'ended')) startCam();
+    }
+  });
+
+  /* --- Boutons --- */
+  $('startBtn').onclick = startCam;
+  $('stopBtn').onclick = stopCam;
+  $('camSel').onchange = () => { if (stream) startCam(); };
+  $('copyBtn').onclick = async () => {
+    try { await navigator.clipboard.writeText(viewLink()); $('copyBtn').textContent = 'Copié ✓'; }
+    catch(e) { $('linkBox').select(); document.execCommand('copy'); $('copyBtn').textContent = 'Copié ✓'; }
+    setTimeout(() => $('copyBtn').textContent = 'Copier le lien', 1500);
+  };
+  $('newIdBtn').onclick = () => {
+    if (!confirm("L'ancien lien ne marchera plus dans OBS. Continuer ?")) return;
+    myId = newId();
+    viewers.clear(); updateCount();
+    connectPeer();
+  };
+  $('dimBtn').onclick = () => $('dim').classList.remove('hidden');
+  $('dim').onclick = () => $('dim').classList.add('hidden');
+
+  connectPeer();
+}
+
+/* =====================================================
+   RÉCEPTEUR (OBS)
+   ===================================================== */
+function startViewer(targetId) {
+  document.body.classList.add('viewer');
+  const video = $('view'), st = $('vstatus');
+  video.classList.remove('hidden');
+  if (params.get('fit') === 'cover') video.classList.add('cover');
+  if (params.get('audio') === '1') video.muted = false;
+  const showStatus = params.get('status') !== '0';
+
+  let peer = null, retryTimer = null, watchdog = null, gotStream = false;
+
+  function status(t) {
+    if (!showStatus) return;
+    st.textContent = t;
+    st.classList.toggle('hidden', !t);
+  }
+  function retry(why) {
+    if (retryTimer) return;
+    gotStream = false;
+    status((why || 'Déconnecté') + ' — nouvel essai…');
+    retryTimer = setTimeout(() => { retryTimer = null; connect(); }, 3000);
+  }
+
+  function connect() {
+    clearTimeout(watchdog);
+    if (peer) { try { peer.destroy(); } catch(e) {} }
+    status('Connexion à l\'iPad…');
+    peer = new Peer();
+    peer.on('open', () => {
+      const conn = peer.connect(targetId, { reliable: true });
+      conn.on('close', () => retry('iPad déconnecté'));
+      conn.on('error', () => retry('Erreur'));
+      // Si rien n'arrive, on réessaie
+      watchdog = setTimeout(() => { if (!gotStream) retry('En attente de la caméra'); }, 15000);
+    });
+    peer.on('call', call => {
+      call.answer();
+      call.on('stream', s => {
+        gotStream = true;
+        clearTimeout(watchdog);
+        video.srcObject = s;
+        video.play().catch(() => {});
+        status('');
+      });
+      call.on('close', () => retry('Flux arrêté'));
+      const pc = call.peerConnection;
+      pc.addEventListener('connectionstatechange', () => {
+        if (['failed', 'disconnected', 'closed'].includes(pc.connectionState)) retry('Connexion perdue');
+      });
+    });
+    peer.on('error', err => retry(err.type === 'peer-unavailable' ? 'iPad hors ligne' : 'Erreur réseau'));
+  }
+  connect();
+}
+</script>
+</body>
+</html>
