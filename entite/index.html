@@ -91,8 +91,7 @@ form.composer { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto 
       <div>
         <label for="model">Modèle</label>
         <select id="model">
-          <option value="llama-3.1-8b-instant">Llama 3.1 8B (rapide)</option>
-          <option value="meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout (meilleur)</option>
+          <option value="">Colle ta clé pour charger les modèles</option>
         </select>
       </div>
       <div style="flex:0 0 90px">
@@ -101,6 +100,7 @@ form.composer { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto 
       </div>
     </div>
 
+    <p class="hint" id="modelsInfo">La liste des modèles vient de ton compte Groq.</p>
     <div class="row">
       <div style="flex:0 0 110px">
         <label for="points">Points</label>
@@ -177,6 +177,42 @@ $("rememberKey").addEventListener("change", () => { if ($("rememberKey").checked
 $("key").addEventListener("input", () => { if ($("rememberKey").checked) store.set("entite_key", $("key").value.trim()); });
 loadTexts(false);
 
+// ---- Modèles disponibles pour cette clé ----
+// Exclut ce qui n'est pas un modèle de discussion (voix, transcription, filtres de sécurité)
+const NOT_CHAT = /whisper|tts|playai|orpheus|guard|distil|embed|speech|audio|vision-preview/i;
+function rankModel(id) {
+  // Préférences : modèles de discussion connus et rapides en premier
+  const order = [/llama-?3\.3-70b/i, /gpt-oss-120b/i, /gpt-oss-20b/i, /llama-?4/i, /llama-?3\.1-8b/i, /qwen/i, /kimi/i, /llama/i, /gemma/i, /mistral/i];
+  const i = order.findIndex((r) => r.test(id));
+  return i < 0 ? order.length : i;
+}
+let modelsTimer = null;
+async function loadModels() {
+  const key = $("key").value.trim();
+  if (!key) return;
+  $("modelsInfo").textContent = "Chargement des modèles…";
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/models", { headers: { "Authorization": "Bearer " + key } });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $("modelsInfo").textContent = res.status === 401 ? "Clé refusée : vérifie-la sur console.groq.com." : "Impossible de charger les modèles (" + res.status + ").";
+      return;
+    }
+    const ids = (data.data || []).filter((m) => m && m.id && m.active !== false && !NOT_CHAT.test(m.id)).map((m) => m.id);
+    ids.sort((a, b) => rankModel(a) - rankModel(b) || a.localeCompare(b));
+    const sel = $("model"), wanted = sel.value || store.get("entite_model");
+    sel.innerHTML = "";
+    for (const id of ids) sel.append(new Option(id, id));
+    if (wanted && ids.includes(wanted)) sel.value = wanted;
+    $("modelsInfo").textContent = ids.length ? ids.length + " modèles disponibles pour ta clé." : "Aucun modèle de discussion disponible pour cette clé.";
+  } catch (err) {
+    $("modelsInfo").textContent = "Impossible de joindre Groq : " + (err && err.message ? err.message : err);
+  }
+}
+$("model").addEventListener("change", () => store.set("entite_model", $("model").value));
+$("key").addEventListener("input", () => { clearTimeout(modelsTimer); modelsTimer = setTimeout(loadModels, 600); });
+if ($("key").value.trim()) loadModels();
+
 $("killBtn").addEventListener("click", () => { $("points").value = (Number($("points").value) || 0) + 3; });
 $("resetBtn").addEventListener("click", () => {
   history = [];
@@ -247,6 +283,7 @@ $("composer").addEventListener("submit", async (e) => {
   const message = $("message").value.trim();
   if (!message) return;
   if (!key) { addBubble("error", "Erreur", "Colle d'abord ta clé API Groq dans le champ à gauche."); return; }
+  if (!$("model").value) { await loadModels(); if (!$("model").value) { addBubble("error", "Erreur", "Aucun modèle chargé : vérifie ta clé."); return; } }
   const current = { player, message };
   addBubble("player", player, message);
   $("message").value = "";
@@ -254,31 +291,45 @@ $("composer").addEventListener("submit", async (e) => {
   setState("Le robot réfléchit...", "busy");
   const t0 = performance.now();
   try {
-    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    const body = {
+      model: $("model").value,
+      temperature: Number($("temp").value) || 0.9,
+      max_tokens: 500,
+      response_format: { type: "json_object" },
+      messages: buildMessages(current),
+    };
+    const call = () => fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
-      body: JSON.stringify({
-        model: $("model").value,
-        temperature: Number($("temp").value) || 0.9,
-        max_tokens: 150,
-        response_format: { type: "json_object" },
-        messages: buildMessages(current),
-      }),
+      body: JSON.stringify(body),
     });
-    const data = await res.json().catch(() => ({}));
+    let res = await call();
+    let data = await res.json().catch(() => ({}));
+    // Certains modèles n'acceptent pas le mode JSON : on réessaie sans (le rôle demande déjà du JSON)
+    if (res.status === 400 && /response_format|json/i.test((data.error && data.error.message) || "")) {
+      delete body.response_format;
+      res = await call();
+      data = await res.json().catch(() => ({}));
+    }
     const ms = Math.round(performance.now() - t0);
     $("time").textContent = (ms / 1000).toFixed(1).replace(".", ",") + " s";
     if (!res.ok) {
       const msg = (data.error && data.error.message) || ("Erreur " + res.status);
       const hint = res.status === 401 ? "\nLa clé est refusée : vérifie-la sur console.groq.com." :
-                   res.status === 429 ? "\nLimite gratuite atteinte : attends une minute et réessaie." : "";
+                   res.status === 429 ? "\nLimite gratuite atteinte : attends une minute et réessaie." :
+                   res.status === 404 ? "\nCe modèle n'est pas disponible : choisis-en un autre dans la liste." : "";
       addBubble("error", "Erreur " + res.status, msg + hint);
       setState("Erreur", "err");
       return;
     }
     const content = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : "";
     let reply;
-    try { reply = JSON.parse(content); } catch (err) { reply = { say: content, actions: [] }; }
+    try { reply = JSON.parse(content); }
+    catch (err) {
+      const m = content.match(/\{[\s\S]*\}/);
+      try { reply = m ? JSON.parse(m[0]) : null; } catch (e2) { reply = null; }
+      if (!reply) reply = { say: content, actions: [] };
+    }
     if (typeof reply.say !== "string") reply.say = String(reply.say || "");
     if (!Array.isArray(reply.actions)) reply.actions = [];
     history.push({ player, message, reply });
