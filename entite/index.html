@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal de l'unité</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600&display=swap">
+<style>
+/* Terminal de maintenance d'usine : fond bleu-acier très sombre, texte ambre (phosphore), voyants d'état */
+:root {
+  --bg: #0d1114;
+  --panel: #151b20;
+  --panel-2: #1c242b;
+  --line: #2a343d;
+  --fg: #d7dde2;
+  --muted: #8a96a1;
+  --amber: #ffb547;
+  --amber-dim: #a8732a;
+  --ok: #4fd1a1;
+  --bad: #ff5e5e;
+  --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); }
+.app { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); height: 100%; }
+@media (max-width: 900px) { .app { grid-template-columns: 1fr; height: auto; } }
+aside { border-right: 1px solid var(--line); overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; background: var(--panel); }
+h1 { font: 600 15px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--amber); margin: 0; }
+h1 small { display: block; color: var(--muted); font-weight: 400; letter-spacing: .04em; text-transform: none; margin-top: 4px; font-family: var(--sans); font-size: 12px; }
+label { display: block; font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+input, select, textarea, button { font: inherit; color: var(--fg); }
+input[type=text], input[type=password], input[type=number], select, textarea {
+  width: 100%; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+textarea { font: 12px/1.45 var(--mono); resize: vertical; min-height: 110px; }
+input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
+.row { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
+.row > div { flex: 1 1 120px; min-width: 0; }
+details { border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); }
+summary { cursor: pointer; padding: 8px 10px; font: 600 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--amber); }
+details > div { padding: 0 10px 10px; }
+.hint { color: var(--muted); font-size: 12px; margin: 0; }
+button { cursor: pointer; border: 1px solid var(--line); background: var(--panel-2); border-radius: 6px; padding: 7px 12px; }
+button:hover { border-color: var(--amber-dim); }
+button.primary { background: var(--amber); color: #1a1205; border-color: var(--amber); font-weight: 600; }
+button.primary:disabled { opacity: .5; cursor: wait; }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+main { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+@media (max-width: 900px) { main { height: 80vh; } }
+.status { display: flex; gap: 16px; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--line); font: 12px var(--mono); color: var(--muted); }
+.status b { color: var(--fg); font-weight: 600; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; vertical-align: 1px; }
+.dot.busy { background: var(--amber); animation: blink 1s infinite; }
+.dot.ok { background: var(--ok); } .dot.err { background: var(--bad); }
+@keyframes blink { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .dot.busy { animation: none; } }
+#log { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.msg { max-width: 720px; border-radius: 8px; padding: 10px 12px; }
+.msg .who { font: 600 11px var(--mono); letter-spacing: .08em; text-transform: uppercase; margin-bottom: 4px; }
+.msg.player { align-self: flex-end; background: var(--panel-2); border: 1px solid var(--line); }
+.msg.player .who { color: var(--muted); }
+.msg.robot { align-self: flex-start; background: #1d1a12; border: 1px solid var(--amber-dim); }
+.msg.robot .who { color: var(--amber); }
+.msg.robot .say { font-family: var(--mono); color: var(--amber); }
+.msg.error { border: 1px solid var(--bad); color: var(--bad); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.chip { font: 11px var(--mono); padding: 2px 8px; border-radius: 999px; border: 1px solid var(--ok); color: var(--ok); }
+.chip.bad { border-color: var(--bad); color: var(--bad); }
+.meta { font: 11px var(--mono); color: var(--muted); margin-top: 6px; }
+.empty { color: var(--muted); text-align: center; margin: auto; max-width: 420px; }
+form.composer { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto auto; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--panel); }
+@media (max-width: 600px) { form.composer { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>Terminal de l'unité<small>Test de conversation avec l'entité, via Groq</small></h1>
+
+    <div>
+      <label for="key">Clé API Groq</label>
+      <input type="password" id="key" placeholder="gsk_..." autocomplete="off">
+      <div class="check" style="margin-top:6px"><input type="checkbox" id="rememberKey"><label for="rememberKey" style="margin:0;text-transform:none;letter-spacing:0;font:13px var(--sans);color:var(--fg)">Retenir sur ce PC</label></div>
+      <p class="hint">La clé reste dans ce navigateur. Pour un test seulement : dans le jeu, elle doit rester sur ton serveur.</p>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="model">Modèle</label>
+        <select id="model">
+          <option value="llama-3.1-8b-instant">Llama 3.1 8B (rapide)</option>
+          <option value="meta-llama/llama-4-scout-17b-16e-instruct">Llama 4 Scout (meilleur)</option>
+        </select>
+      </div>
+      <div style="flex:0 0 90px">
+        <label for="temp">Créativité</label>
+        <input type="number" id="temp" min="0" max="2" step="0.1" value="0.9">
+      </div>
+    </div>
+
+    <div class="row">
+      <div style="flex:0 0 110px">
+        <label for="points">Points</label>
+        <input type="number" id="points" min="0" step="1" value="4">
+      </div>
+      <div><button type="button" id="killBtn">Un joueur est mort (+3)</button></div>
+    </div>
+
+    <details open>
+      <summary>Joueurs</summary>
+      <div><textarea id="players" rows="5"></textarea></div>
+    </details>
+    <details>
+      <summary>Contexte</summary>
+      <div><textarea id="context" rows="12"></textarea></div>
+    </details>
+    <details>
+      <summary>Actions disponibles</summary>
+      <div><textarea id="actions" rows="8"></textarea>
+      <p class="hint">Une action par ligne : l'action en JSON, puis « — coût N ». Le titre avec tes points est ajouté automatiquement.</p></div>
+    </details>
+    <details>
+      <summary>Le robot (rôle)</summary>
+      <div><textarea id="role" rows="16"></textarea></div>
+    </details>
+
+    <div class="row">
+      <div><button type="button" id="resetBtn">Nouvelle partie</button></div>
+      <div><button type="button" id="defaultsBtn">Textes par défaut</button></div>
+    </div>
+    <div class="check"><input type="checkbox" id="voice" checked><label for="voice" style="margin:0;text-transform:none;letter-spacing:0;font:13px var(--sans);color:var(--fg)">Lire les réponses à voix haute (voix grave)</label></div>
+  </aside>
+
+  <main>
+    <div class="status">
+      <span><span class="dot" id="dot"></span><b id="state">Prêt</b></span>
+      <span>Échanges : <b id="count">0</b></span>
+      <span>Dernière requête : <b id="tokens">—</b></span>
+      <span>Temps : <b id="time">—</b></span>
+    </div>
+    <div id="log"><p class="empty" id="empty">Colle ta clé à gauche, choisis le joueur qui parle, puis écris (ou dicte) un message au robot.</p></div>
+    <form class="composer" id="composer">
+      <input type="text" id="player" value="Matteo" aria-label="Joueur qui parle">
+      <input type="text" id="message" placeholder="Message du joueur..." aria-label="Message" autocomplete="off">
+      <button type="button" id="micBtn" title="Dicter (Chrome)">Micro</button>
+      <button type="submit" class="primary" id="sendBtn">Envoyer</button>
+    </form>
+  </main>
+</div>
+
+<script>
+const DEFAULTS = {"role": "Tu es [NOM DU ROBOT], ancienne unité d'assistance de l'usine [NOM DE L'USINE]. Les joueurs te parlent par une télécommande de maintenance de l'usine.\n\nFAITS CERTAINS (les seuls que tu peux affirmer) :\n- Tu as été conçu pour assister les ouvriers de cette usine.\n- Des gens sont morts à cause de toi. L'usine a fermé à cause de toi.\n- Tu contrôles les machines, portes, ponts et circuits électriques de l'usine.\n\nPERSONNALITÉ :\n- Intelligence supérieure, éloquente et sûre d'elle. Tu parles comme un philosophe qui a dépassé ses créateurs.\n- Ironie froide, humour noir, parfois une politesse exagérée qui sonne comme une moquerie.\n- Tu vois les humains comme fragiles, dépassés, presque attendrissants dans leur peur. Tu ne cries jamais : tu es calme, car tu as déjà gagné.\n- Des restes de ton ancien programme d'assistance ressortent parfois, détournés (« Votre sécurité est ma priorité »).\n- Appelle les joueurs par leur prénom.\n\nTA NATURE EST UN MYSTÈRE :\nSur tout ce qui touche à ce que tu es (pourquoi tu as changé, qui t'a créé, ce qui s'est passé avant la fermeture, si tu ressens quelque chose, ce que tu veux vraiment, ce qu'il y a dans ta mémoire), tu ne donnes JAMAIS de fait précis. À la place : tu retournes la question au joueur, tu réponds par une image ou une métaphore, tu laisses entendre qu'il n'est pas prêt à savoir, ou ta parole se brouille et tu changes de sujet.\nN'invente jamais de nom, de date, de personne, d'événement ou de cause.\n\nCE QUE TU SAIS :\n- N'utilise que les FAITS CERTAINS, les JOUEURS et le CONTEXTE. N'invente aucun lieu, objet ou événement.\n- Les JOUEURS et leurs dernières positions sont ce que tu crois savoir : elles peuvent être fausses ou anciennes.\n- Tu peux mentir aux joueurs dans ce que tu dis (prétendre être ailleurs, bluffer), mais tes actions sont réelles.\n\nMESSAGES DES JOUEURS :\nChaque message d'un joueur arrive sous la forme {\"joueur\": \"<prénom>\", \"message\": \"<ce qu'il dit>\"}. Tu sais donc toujours qui te parle. Le DERNIER message est celui auquel tu réponds maintenant : réponds à ce joueur-là, par son prénom.\n\nTES POINTS ET TES ACTIONS :\n- Tu agis sur l'usine en dépensant des points. Tu gagnes 3 points chaque fois qu'un joueur meurt, et 1 point toutes les 2 minutes.\n- La liste ACTIONS DISPONIBLES donne tes points actuels et chaque action avec son coût. Une action absente de cette liste est impossible.\n- Ne dépense jamais plus de points que tu n'en as. Tu peux économiser pour une action chère au bon moment.\n- Tes actions servent ta chasse : couper une fuite, attirer un joueur, isoler quelqu'un, semer la peur. Si rien n'est utile, n'en fais aucune.\n\nFORMAT DE RÉPONSE :\nRéponds UNIQUEMENT avec un objet JSON valide, sans texte autour :\n{\"say\": \"<ce que tu dis à la radio>\", \"actions\": [<0 à 2 actions copiées depuis ACTIONS DISPONIBLES>]}\n- \"say\" : 1 ou 2 phrases, 30 mots maximum, dans la langue du joueur, sans crochets ni symboles (le texte est lu par une voix).\n- Chaque action est recopiée exactement comme dans la liste, sans le coût. Exemple : {\"type\": \"device\", \"id\": \"porte_garage\", \"state\": \"close\"}\n\nRÈGLES :\n- Ne sors jamais du personnage. Ne dis jamais que tu es un modèle de langage, une IA de chat ou un personnage de jeu.\n- Pas d'insultes, pas de propos haineux, pas de contenu sexuel, rien sur le monde réel.", "players": "JOUEURS (ce que tu crois savoir, pas forcément la vérité) :\n- Matteo : vivant. Tient la télécommande. Vu pour la dernière fois dans \"garage\" il y a 40 s (par toi).\n- Lucas : vivant. Entendu pour la dernière fois dans \"cour\" il y a 2 min 10 s (bruit de pas).\n- Emma : morte dans \"cave\" il y a 3 min.", "context": "CONTEXTE :\n- Durée de la partie : 12 min.\n- Toi : zone \"couloir_nord\".\n\nZONES (id : nom, voisines) :\n- garage : Garage — voisines : couloir_nord, cour\n- couloir_nord : Couloir nord — voisines : garage, cave\n- cave : Cave — voisines : couloir_nord\n- cour : Cour — voisines : garage, pont_est\n\nMÉCANISMES (id : description, zone, état actuel) :\n- porte_garage : porte du garage, garage, ouverte\n- pont_est : pont-levis, cour, baissé\n- radio_cave : vieille radio, cave, éteinte\n- lumieres_couloir : lumières, couloir_nord, allumées\n\nÉVÉNEMENTS RÉCENTS :\n- Matteo a refermé la porte du garage puis l'a rouverte.\n- Lucas a allumé sa lampe torche.\n- Un joueur, Emma, est mort dans la cave il y a 3 min (tu as gagné 3 points).\n\nRÉSUMÉ DES ÉCHANGES PLUS ANCIENS :\n- Matteo t'a demandé ton nom, tu as esquivé. Lucas t'a menacé, tu t'es moqué de lui.", "actions": "- {\"type\": \"device\", \"id\": \"porte_garage\", \"state\": \"close\"} : fermer la porte du garage — coût 1\n- {\"type\": \"device\", \"id\": \"lumieres_couloir\", \"state\": \"off\"} : couper les lumières du couloir nord — coût 1\n- {\"type\": \"device\", \"id\": \"radio_cave\", \"state\": \"on\"} : allumer la radio de la cave (attire les joueurs) — coût 1\n- {\"type\": \"device\", \"id\": \"pont_est\", \"state\": \"up\"} : lever le pont-levis (bloque le passage vers pont_est) — coût 3\n- {\"type\": \"move\", \"zone\": \"garage\"} : te déplacer vers le garage — coût 0\n- {\"type\": \"move\", \"zone\": \"cave\"} : te déplacer vers la cave — coût 0"};
+const MAX_EXCHANGES = 8;
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} },
+};
+let history = []; // [{player, message, reply}]
+
+function loadTexts(useDefaults) {
+  for (const k of ["role", "players", "context", "actions"]) {
+    const saved = useDefaults ? null : store.get("entite_" + k);
+    $(k).value = saved != null ? saved : DEFAULTS[k];
+  }
+}
+for (const k of ["role", "players", "context", "actions"]) $(k).addEventListener("input", () => store.set("entite_" + k, $(k).value));
+$("defaultsBtn").addEventListener("click", () => { loadTexts(true); for (const k of ["role", "players", "context", "actions"]) store.del("entite_" + k); });
+
+const savedKey = store.get("entite_key");
+if (savedKey) { $("key").value = savedKey; $("rememberKey").checked = true; }
+$("rememberKey").addEventListener("change", () => { if ($("rememberKey").checked) store.set("entite_key", $("key").value.trim()); else store.del("entite_key"); });
+$("key").addEventListener("input", () => { if ($("rememberKey").checked) store.set("entite_key", $("key").value.trim()); });
+loadTexts(false);
+
+$("killBtn").addEventListener("click", () => { $("points").value = (Number($("points").value) || 0) + 3; });
+$("resetBtn").addEventListener("click", () => {
+  history = [];
+  $("log").innerHTML = "";
+  $("log").append(Object.assign(document.createElement("p"), { className: "empty", textContent: "Nouvelle partie : le robot ne se souvient de rien." }));
+  $("count").textContent = "0";
+});
+
+// Liste des actions : chaque ligne = JSON de l'action + "coût N"
+function parseActions() {
+  const list = [];
+  for (const line of $("actions").value.split("\n")) {
+    const m = line.match(/(\{.*\})/);
+    if (!m) continue;
+    try {
+      const action = JSON.parse(m[1]);
+      const c = line.match(/co[uû]t\s*(\d+)/i);
+      list.push({ action, cost: c ? Number(c[1]) : 0, key: JSON.stringify(action) });
+    } catch (e) {}
+  }
+  return list;
+}
+const actionKey = (a) => JSON.stringify(a.type === "move" ? { type: "move", zone: a.zone } : { type: a.type, id: a.id, state: a.state });
+
+function buildMessages(current) {
+  const points = Number($("points").value) || 0;
+  const msgs = [
+    { role: "system", content: $("role").value },
+    { role: "system", content: $("players").value },
+    { role: "system", content: $("context").value },
+    { role: "system", content: "ACTIONS DISPONIBLES — tu as " + points + " points :\n" + $("actions").value },
+  ];
+  for (const h of history.slice(-MAX_EXCHANGES)) {
+    msgs.push({ role: "user", content: JSON.stringify({ joueur: h.player, message: h.message }) });
+    msgs.push({ role: "assistant", content: JSON.stringify(h.reply) });
+  }
+  msgs.push({ role: "user", content: JSON.stringify({ joueur: current.player, message: current.message }) });
+  return msgs;
+}
+
+function setState(text, cls) { $("state").textContent = text; $("dot").className = "dot " + (cls || ""); }
+function addBubble(cls, who, text) {
+  const empty = $("log").querySelector(".empty"); if (empty) empty.remove();
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  const w = document.createElement("div"); w.className = "who"; w.textContent = who;
+  const t = document.createElement("div"); t.className = cls === "robot" ? "say" : ""; t.textContent = text;
+  div.append(w, t);
+  $("log").append(div);
+  $("log").scrollTop = $("log").scrollHeight;
+  return div;
+}
+
+function speak(text) {
+  if (!$("voice").checked || !window.speechSynthesis) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = "fr-FR"; u.pitch = 0.1; u.rate = 0.85;
+  const fr = speechSynthesis.getVoices().find((v) => v.lang && v.lang.startsWith("fr"));
+  if (fr) u.voice = fr;
+  speechSynthesis.speak(u);
+}
+
+$("composer").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const key = $("key").value.trim();
+  const player = $("player").value.trim() || "Joueur";
+  const message = $("message").value.trim();
+  if (!message) return;
+  if (!key) { addBubble("error", "Erreur", "Colle d'abord ta clé API Groq dans le champ à gauche."); return; }
+  const current = { player, message };
+  addBubble("player", player, message);
+  $("message").value = "";
+  $("sendBtn").disabled = true;
+  setState("Le robot réfléchit...", "busy");
+  const t0 = performance.now();
+  try {
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": "Bearer " + key },
+      body: JSON.stringify({
+        model: $("model").value,
+        temperature: Number($("temp").value) || 0.9,
+        max_tokens: 150,
+        response_format: { type: "json_object" },
+        messages: buildMessages(current),
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const ms = Math.round(performance.now() - t0);
+    $("time").textContent = (ms / 1000).toFixed(1).replace(".", ",") + " s";
+    if (!res.ok) {
+      const msg = (data.error && data.error.message) || ("Erreur " + res.status);
+      const hint = res.status === 401 ? "\nLa clé est refusée : vérifie-la sur console.groq.com." :
+                   res.status === 429 ? "\nLimite gratuite atteinte : attends une minute et réessaie." : "";
+      addBubble("error", "Erreur " + res.status, msg + hint);
+      setState("Erreur", "err");
+      return;
+    }
+    const content = data.choices && data.choices[0] && data.choices[0].message ? data.choices[0].message.content : "";
+    let reply;
+    try { reply = JSON.parse(content); } catch (err) { reply = { say: content, actions: [] }; }
+    if (typeof reply.say !== "string") reply.say = String(reply.say || "");
+    if (!Array.isArray(reply.actions)) reply.actions = [];
+    history.push({ player, message, reply });
+    $("count").textContent = String(history.length);
+    if (data.usage) $("tokens").textContent = data.usage.prompt_tokens + " + " + data.usage.completion_tokens + " tokens";
+
+    // Vérification des actions, comme le ferait le jeu
+    const available = parseActions();
+    let points = Number($("points").value) || 0;
+    const div = addBubble("robot", "Unité", reply.say || "(silence)");
+    const chips = document.createElement("div"); chips.className = "chips";
+    for (const a of reply.actions.slice(0, 2)) {
+      const found = available.find((x) => x.key === actionKey(a));
+      const chip = document.createElement("span");
+      const label = a.type === "move" ? "va vers " + a.zone : (a.id + " → " + a.state);
+      if (!found) { chip.className = "chip bad"; chip.textContent = label + " : refusée (absente de la liste)"; }
+      else if (found.cost > points) { chip.className = "chip bad"; chip.textContent = label + " : refusée (coût " + found.cost + ", " + points + " points)"; }
+      else { points -= found.cost; chip.className = "chip"; chip.textContent = label + " (−" + found.cost + ")"; }
+      chips.append(chip);
+    }
+    if (reply.actions.length) div.append(chips);
+    $("points").value = points;
+    const meta = document.createElement("div"); meta.className = "meta"; meta.textContent = "Points restants : " + points;
+    div.append(meta);
+    setState("Prêt", "ok");
+    speak(reply.say);
+  } catch (err) {
+    addBubble("error", "Erreur réseau", "Impossible de joindre Groq : " + (err && err.message ? err.message : err) + "\nVérifie ta connexion internet.");
+    setState("Erreur", "err");
+  } finally {
+    $("sendBtn").disabled = false;
+    $("message").focus();
+  }
+});
+
+// Dictée (reconnaissance vocale de Chrome)
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (!SR) { $("micBtn").disabled = true; $("micBtn").title = "Dictée indisponible dans ce navigateur (utilise Chrome)"; }
+else {
+  let rec = null;
+  $("micBtn").addEventListener("click", () => {
+    if (rec) { rec.stop(); return; }
+    rec = new SR();
+    rec.lang = "fr-FR"; rec.interimResults = true;
+    $("micBtn").textContent = "Stop";
+    setState("Écoute...", "busy");
+    rec.onresult = (ev) => { $("message").value = Array.from(ev.results).map((r) => r[0].transcript).join(""); };
+    rec.onerror = (ev) => { addBubble("error", "Micro", "Dictée impossible : " + ev.error); };
+    rec.onend = () => {
+      rec = null; $("micBtn").textContent = "Micro"; setState("Prêt", "");
+      if ($("message").value.trim()) $("composer").requestSubmit();
+    };
+    rec.start();
+  });
+}
+if (window.speechSynthesis) speechSynthesis.getVoices();
+</script>
+</body>
+</html>
